@@ -26,4 +26,18 @@ describe('slugify', () => {
     expect(slugify('Morning Vinyasa with Aiko!')).toBe('morning-vinyasa-with-aiko')
     expect(validateSlug(slugify('Hello   World'))).toBeNull()
   })
+  it('emoji-only titles slugify to empty and fail validation', () => {
+    expect(slugify('🧘🔥💯')).toBe('')
+    expect(validateSlug(slugify('🧘🔥💯'))).toBeTruthy()
+  })
+  it('63-char truncation never leaves a trailing hyphen', () => {
+    const s = slugify('a'.repeat(62) + ' b')
+    expect(s).toHaveLength(62)
+    expect(validateSlug(s)).toBeNull()
+  })
+  it('rejects newly reserved route words', () => {
+    for (const s of ['new', 'login', 'settings', 'account']) {
+      expect(validateSlug(s)).toMatch(/reserved/)
+    }
+  })
 })

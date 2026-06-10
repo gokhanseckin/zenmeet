@@ -1,6 +1,7 @@
 export const RESERVED_SLUGS = new Set([
   'my', 'api', 'dashboard', 'admin', 'auth', 'onboarding', 'about', 'pricing',
-  'terms', 'privacy', 'help', 'blog', 'app', 'www', 'static', '_next', 'favicon.ico',
+  'terms', 'privacy', 'help', 'blog', 'app', 'www', 'static',
+  'new', 'login', 'logout', 'signup', 'settings', 'profile', 'account', 'search', 'home',
 ])
 
 const SHAPE = /^[a-z0-9]+(-[a-z0-9]+)*$/
