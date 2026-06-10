@@ -19,6 +19,12 @@ export function materializeOccurrences(rule: ScheduleRule, fromUtc: Date, days: 
   }
 
   const [hour, minute] = rule.localTime.split(':').map(Number)
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour > 23 || minute > 59 || hour < 0 || minute < 0) {
+    throw new Error(`Invalid localTime: ${rule.localTime}`)
+  }
+  if (!DateTime.local().setZone(rule.timezone).isValid) {
+    throw new Error(`Invalid timezone: ${rule.timezone}`)
+  }
   const luxonWeekday = rule.weekday === 0 ? 7 : rule.weekday // luxon: 1=Mon..7=Sun
   const out: Occurrence[] = []
   // Walk local calendar days across the window (pad a day each side for tz offsets).
@@ -26,6 +32,7 @@ export function materializeOccurrences(rule: ScheduleRule, fromUtc: Date, days: 
   const lastDay = windowEnd.setZone(rule.timezone).plus({ days: 1 }).startOf('day')
   for (; day <= lastDay; day = day.plus({ days: 1 })) {
     if (day.weekday !== luxonWeekday) continue
+    // until is INCLUSIVE by design: occurrences ON the until date still run (`>` not `>=`).
     if (rule.until && day.toISODate()! > rule.until) break
     const start = day.set({ hour, minute }) // luxon resolves DST for this wall time
     if (start < windowStart || start >= windowEnd) continue

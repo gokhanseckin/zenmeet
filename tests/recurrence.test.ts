@@ -43,4 +43,11 @@ describe('weekly', () => {
     const occ = materializeOccurrences(weekly(), new Date('2026-06-15T11:00:01Z'), 7)
     expect(occ.map(o => o.startsAt.toISOString())).toEqual(['2026-06-22T11:00:00.000Z'])
   })
+  it('throws on out-of-range localTime instead of silently shifting days', () => {
+    expect(() => materializeOccurrences(weekly({ localTime: '24:00' }), new Date('2026-06-10T00:00:00Z'), 14)).toThrow(/localTime/)
+    expect(() => materializeOccurrences(weekly({ localTime: '25:99' }), new Date('2026-06-10T00:00:00Z'), 14)).toThrow(/localTime/)
+  })
+  it('throws on an invalid IANA timezone instead of silently yielding zero sessions', () => {
+    expect(() => materializeOccurrences(weekly({ timezone: 'America/Not_A_Zone' }), new Date('2026-06-10T00:00:00Z'), 14)).toThrow(/timezone/)
+  })
 })
