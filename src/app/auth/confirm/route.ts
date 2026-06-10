@@ -6,11 +6,16 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const token_hash = url.searchParams.get('token_hash')
   const type = url.searchParams.get('type') as EmailOtpType | null
-  const next = (raw => (raw && raw.startsWith('/') ? raw : '/'))(url.searchParams.get('next'))
+  const rawNext = url.searchParams.get('next') ?? '/'
+  const next = /^\/(?!\/)/.test(rawNext) ? rawNext : '/'
   if (token_hash && type) {
-    const supabase = await supabaseServer()
-    const { error } = await supabase.auth.verifyOtp({ type, token_hash })
-    if (!error) return NextResponse.redirect(new URL(next, url.origin))
+    try {
+      const supabase = await supabaseServer()
+      const { error } = await supabase.auth.verifyOtp({ type, token_hash })
+      if (!error) return NextResponse.redirect(new URL(next, url.origin))
+    } catch {
+      // fall through to the error redirect below
+    }
   }
   return NextResponse.redirect(new URL('/auth/sign-in?error=link', url.origin))
 }

@@ -1,26 +1,30 @@
 import { supabaseServer } from '@/lib/supabase/server'
 import { env } from '@/lib/env'
 
-export default async function SignIn({ searchParams }: { searchParams: Promise<{ next?: string; sent?: string }> }) {
-  const { next = '/', sent } = await searchParams
+export default async function SignIn({ searchParams }: { searchParams: Promise<{ next?: string; sent?: string; error?: string }> }) {
+  const { next: rawNextParam = '/', sent, error } = await searchParams
+  const next = /^\/(?!\/)/.test(rawNextParam) ? rawNextParam : '/'
 
   async function send(formData: FormData) {
     'use server'
     const email = String(formData.get('email') ?? '').trim()
-    const nextPath = String(formData.get('next') ?? '/')
+    const rawNext = String(formData.get('next') ?? '/')
+    const nextPath = /^\/(?!\/)/.test(rawNext) ? rawNext : '/'
     if (!email) return
     const supabase = await supabaseServer()
-    await supabase.auth.signInWithOtp({
+    const { error } = await supabase.auth.signInWithOtp({
       email,
       options: { emailRedirectTo: `${env().APP_URL}/auth/confirm?next=${encodeURIComponent(nextPath)}` },
     })
     const { redirect } = await import('next/navigation')
+    if (error) redirect(`/auth/sign-in?error=send&next=${encodeURIComponent(nextPath)}`)
     redirect(`/auth/sign-in?sent=1&next=${encodeURIComponent(nextPath)}`)
   }
 
   return (
     <main className="mx-auto max-w-sm p-8">
       <h1 className="text-2xl font-semibold mb-4">Sign in to Zenmeet</h1>
+      {error === 'send' && <p className="text-sm text-red-700">Couldn&apos;t send the link — wait a minute and try again.</p>}
       {sent ? (
         <p>Check your email for a sign-in link.</p>
       ) : (
