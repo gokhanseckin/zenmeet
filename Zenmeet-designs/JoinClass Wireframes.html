@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JoinClass — Wireframes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; height: 100%; background: #f0eee9; }
+  * { -webkit-font-smoothing: antialiased; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="wf-kit.jsx"></script>
+<script type="text/babel" src="wf-classroom.jsx"></script>
+<script type="text/babel" src="wf-account.jsx"></script>
+<script type="text/babel" src="wf-home.jsx"></script>
+<script type="text/babel" src="wf-onboarding.jsx"></script>
+<script type="text/babel" src="wf-payment.jsx"></script>
+<script type="text/babel" src="wf-schedule.jsx"></script>
+<script type="text/babel" src="wf-prototype.jsx"></script>
+
+<script type="text/babel">
+const {
+  DesignCanvas, DCSection, DCArtboard,
+  ClassroomA_Desktop, ClassroomA_Mobile, ClassroomB_Desktop, ClassroomB_Mobile,
+  AcctAuth, AcctHomeNew, AcctHomeBoth, SiteHome, AcctChooseDemo,
+  OnbA2, OnbA3, OnbA4, OnbA5, OnbB1, OnbB2,
+  PayA1, PayA2, PayA3, PayA4, PayB1, PayB2,
+  SchedA_Desktop, SchedA_Mobile, SchedB_Desktop,
+  Prototype,
+} = window;
+
+const DESK = 1080, DESKH = 740;
+const MOB = 300, MOBH = 660;
+const ONB = 560, ONBH = 600;
+
+function App() {
+  return (
+    <DesignCanvas>
+      <DCSection id="classroom" title="Public classroom page"
+        subtitle="Logged-out · custom URL · pricing + countdown to the next class. Accent = the members-only live link.">
+        <DCArtboard id="cl-a-d" label="A · Desktop — countdown hero" width={DESK} height={DESKH}><ClassroomA_Desktop /></DCArtboard>
+        <DCArtboard id="cl-a-m" label="A · Mobile" width={MOB} height={MOBH}><ClassroomA_Mobile /></DCArtboard>
+        <DCArtboard id="cl-b-d" label="B · Desktop — info + pricing card" width={DESK} height={DESKH}><ClassroomB_Desktop /></DCArtboard>
+        <DCArtboard id="cl-b-m" label="B · Mobile" width={MOB} height={MOBH}><ClassroomB_Mobile /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="account" title="One account — homepage, log in & home"
+        subtitle="Skool-style single account type. The homepage is intent-neutral — one Log in / Sign up. After login you choose: search a classroom (as-you-type dropdown) or create one. Both are actions, not account types.">
+        <DCArtboard id="ac-site" label="Homepage — logged out" width={DESK} height={DESKH}><SiteHome /></DCArtboard>
+        <DCArtboard id="ac-auth" label="Log in / sign up — unified" width={ONB} height={ONBH}><AcctAuth /></DCArtboard>
+        <DCArtboard id="ac-choose" label="After login — search or create" width={ONB} height={640}><AcctChooseDemo /></DCArtboard>
+        <DCArtboard id="ac-new" label="Home — new account, both paths" width={ONB} height={620}><AcctHomeNew /></DCArtboard>
+        <DCArtboard id="ac-both" label="Home — member + teacher, same account" width={ONB} height={620}><AcctHomeBoth /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="onboarding" title="Create a classroom"
+        subtitle="Entered from your home with the account you already have — no separate teacher signup.  A: linear wizard (classroom → Stripe → Meet/Zoom → first class).  B: setup-checklist dashboard.">
+        <DCArtboard id="ob-a2" label="A1 · Create classroom" width={ONB} height={ONBH}><OnbA2 /></DCArtboard>
+        <DCArtboard id="ob-a3" label="A2 · Connect Stripe" width={ONB} height={ONBH}><OnbA3 /></DCArtboard>
+        <DCArtboard id="ob-a4" label="A3 · Connect calls" width={ONB} height={ONBH}><OnbA4 /></DCArtboard>
+        <DCArtboard id="ob-a5" label="A4 · First class" width={ONB} height={ONBH}><OnbA5 /></DCArtboard>
+        <DCArtboard id="ob-b1" label="B1 · Setup checklist" width={ONB} height={ONBH}><OnbB1 /></DCArtboard>
+        <DCArtboard id="ob-b2" label="B2 · Connect modal" width={ONB} height={ONBH}><OnbB2 /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="payment" title="Student join + payment"
+        subtitle="A: stepped (log in → pay → member home → the 5-min unlock).  B: one-sheet checkout. Same single account — step 1 is the unified login, not a student signup.">
+        <DCArtboard id="pay-a1" label="A1 · Log in / sign up" width={MOB} height={640}><PayA1 /></DCArtboard>
+        <DCArtboard id="pay-a2" label="A2 · Pay (Stripe)" width={MOB} height={640}><PayA2 /></DCArtboard>
+        <DCArtboard id="pay-a3" label="A3 · Member home — locked" width={MOB} height={690}><PayA3 /></DCArtboard>
+        <DCArtboard id="pay-a4" label="A4 · ★ Doors open — unlocked" width={MOB} height={690}><PayA4 /></DCArtboard>
+        <DCArtboard id="pay-b1" label="B1 · One-sheet checkout" width={MOB} height={640}><PayB1 /></DCArtboard>
+        <DCArtboard id="pay-b2" label="B2 · You're in" width={MOB} height={640}><PayB2 /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="schedule" title="Create a recurring class"
+        subtitle="A: Google-Calendar-style editor — one-off vs recurring.  B: week schedule that handles many classes at varied times.">
+        <DCArtboard id="sc-a-d" label="A · Desktop — calendar-style editor" width={1000} height={640}><SchedA_Desktop /></DCArtboard>
+        <DCArtboard id="sc-a-m" label="A · Mobile" width={MOB} height={MOBH}><SchedA_Mobile /></DCArtboard>
+        <DCArtboard id="sc-b-d" label="B · Desktop — week schedule (varied times)" width={1000} height={560}><SchedB_Desktop /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="prototype" title="Interactive prototype"
+        subtitle="Fully clickable — the buttons inside the screens are live hotspots. Starts at the logged-out homepage: log in → search or create → join Aiko's class → then create your own classroom, same account. Misclicks flash the clickable spots.">
+        <DCArtboard id="proto" label="One account · join → teach — click the screens" width={1180} height={840}><Prototype /></DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
