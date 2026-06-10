@@ -14,6 +14,12 @@ export async function GET(req: NextRequest) {
   url.searchParams.set('redirect_uri', `${env().APP_URL}/api/oauth/stripe/callback`)
   url.searchParams.set('state', state)
   const res = NextResponse.redirect(url)
-  res.cookies.set('oauth_state_stripe', state, { httpOnly: true, sameSite: 'lax', maxAge: 600, path: '/' })
+  res.cookies.set('oauth_state_stripe', state, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 600,
+    path: '/',
+  })
   return res
 }
