@@ -13,6 +13,8 @@ export function encryptJson(value: unknown, keyB64: string): string {
 export function decryptJson<T = unknown>(payloadB64: string, keyB64: string): T {
   const key = Buffer.from(keyB64, 'base64')
   const buf = Buffer.from(payloadB64, 'base64')
+  if (key.length !== 32) throw new Error('TOKEN_ENC_KEY must be 32 bytes (base64)')
+  if (buf.length < 29) throw new Error('decryptJson: payload too short or corrupted')
   const iv = buf.subarray(0, 12)
   const tag = buf.subarray(12, 28)
   const ct = buf.subarray(28)
