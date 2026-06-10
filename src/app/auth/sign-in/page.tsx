@@ -1,15 +1,16 @@
 import { supabaseServer } from '@/lib/supabase/server'
 import { env } from '@/lib/env'
+import { safeNext } from '@/lib/redirects'
 
 export default async function SignIn({ searchParams }: { searchParams: Promise<{ next?: string; sent?: string; error?: string }> }) {
   const { next: rawNextParam = '/', sent, error } = await searchParams
-  const next = /^\/(?!\/)/.test(rawNextParam) ? rawNextParam : '/'
+  const next = safeNext(rawNextParam, new URL(env().APP_URL).origin)
 
   async function send(formData: FormData) {
     'use server'
     const email = String(formData.get('email') ?? '').trim()
     const rawNext = String(formData.get('next') ?? '/')
-    const nextPath = /^\/(?!\/)/.test(rawNext) ? rawNext : '/'
+    const nextPath = safeNext(rawNext, new URL(env().APP_URL).origin)
     if (!email) return
     const supabase = await supabaseServer()
     const { error } = await supabase.auth.signInWithOtp({
