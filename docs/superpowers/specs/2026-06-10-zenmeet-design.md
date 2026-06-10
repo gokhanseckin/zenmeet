@@ -79,7 +79,10 @@ All tables in Supabase Postgres.
 - **`memberships`** — student × classroom. Stripe customer id + subscription id
   (both on the teacher's connected account), status
   (`trialing` | `active` | `past_due` | `canceled`), current period end.
-  Synced by webhook; re-fetched from Stripe on demand if stale-looking.
+  Synced by webhook; additionally re-fetched from Stripe on demand when a
+  student loads member home and either (a) `current_period_end` is in the
+  past while status is still `active`/`trialing`, or (b) they just returned
+  from a Checkout success URL and no webhook has landed yet.
 
 The same auth user may have both a `teachers` and a `students` row.
 
@@ -160,10 +163,15 @@ connect Zoom **or** Google → first class schedule + price → publish.
 ### Teacher dashboard — 4 tabs (wireframe nav)
 
 - **Classroom**: public-page settings, preview, share link.
-- **Schedule**: "New class" form with live preview of generated sessions
-  (variant A: one-off vs recurring toggle, provider picker, "fresh private
-  link per session · revealed 5 min before" note); upcoming-session list with
-  per-session cancel and a manual "paste link" override.
+- **Schedule**: the "New class" form **creates a classroom together with its
+  schedule** in one screen (title, one-off vs recurring toggle, provider
+  picker, "fresh private link per session · revealed 5 min before" note),
+  with a live preview of generated sessions — matching the wireframe, where
+  "Morning Vinyasa with Aiko" is the class itself. The same form edits an
+  existing classroom's schedule. Below it: the upcoming-session list with
+  per-session cancel and a manual "paste link" override. When a teacher has
+  multiple classrooms, the dashboard scopes to one classroom at a time via a
+  switcher; all four tabs operate on the selected classroom.
 - **Students**: member list with membership status.
 - **Payments**: subscriber count, MRR estimate, recent payment events, link to
   Stripe dashboard.
