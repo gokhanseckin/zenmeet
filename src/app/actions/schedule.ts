@@ -14,14 +14,16 @@ const scheduleSchema = z.discriminatedUnion('kind', [
 
 async function assertOwnsClassroom(userId: string, classroomId: string) {
   const { data } = await supabaseAdmin().from('classrooms').select('id, slug').eq('id', classroomId).eq('teacher_id', userId).single()
-  if (!data) throw new Error('Not your classroom')
   return data
 }
 
 export async function createSchedule(input: z.infer<typeof scheduleSchema>) {
   const user = await requireUser('/dashboard')
-  const data = scheduleSchema.parse(input)
-  await assertOwnsClassroom(user.id, data.classroomId)
+  const parsed = scheduleSchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+  const data = parsed.data
+  const classroom = await assertOwnsClassroom(user.id, data.classroomId)
+  if (!classroom) return { error: 'Not found' }
   const db = supabaseAdmin()
   const { error } = data.kind === 'one_off'
     ? await db.from('class_schedules').insert({ classroom_id: data.classroomId, kind: 'one_off', starts_at: data.startsAt, duration_minutes: data.durationMinutes })
@@ -36,7 +38,7 @@ export async function cancelSession(sessionId: string) {
   const db = supabaseAdmin()
   const { data: session } = await db.from('sessions').select('id, classroom_id, classrooms!inner(teacher_id)').eq('id', sessionId).single()
   if (!session || (session as any).classrooms.teacher_id !== user.id) return { error: 'Not found' }
-  const { error } = await db.from('sessions').update({ status: 'canceled' }).eq('id', sessionId)
+  const { error } = await db.from('sessions').update({ status: 'canceled' }).eq('id', sessionId).eq('status', 'scheduled')
   if (error) return { error: error.message }
   revalidatePath('/dashboard/schedule')
   return { ok: true }

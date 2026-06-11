@@ -21,17 +21,43 @@ const upsertSchema = z.object({
 export async function upsertClassroom(input: z.infer<typeof upsertSchema>) {
   const user = await requireUser('/onboarding')
   await ensureTeacher(user.id)
-  const data = upsertSchema.parse(input)
+  const parsed = upsertSchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+  const data = parsed.data
   const slug = data.slug?.trim() || slugify(data.title)
   const slugError = validateSlug(slug)
   if (slugError) return { error: slugError }
 
   const db = supabaseAdmin()
-  const row = {
+  const row: Record<string, unknown> = {
     teacher_id: user.id, title: data.title, slug, description: data.description,
     provider: data.provider, price_amount: data.priceAmount ?? null,
     currency: data.currency, trial_days: data.trialDays,
   }
+
+  if (data.id) {
+    // If the price/currency changed on a classroom that already has a live Stripe price,
+    // mint a replacement price on the connected account and deactivate the old one,
+    // so existing checkout links never charge a stale amount.
+    const { data: existing } = await db.from('classrooms')
+      .select('id, price_amount, currency, stripe_product_id, stripe_price_id, status')
+      .eq('id', data.id).eq('teacher_id', user.id).single()
+    if (!existing) return { error: 'Not found' }
+    const priceChanged = data.priceAmount != null &&
+      (data.priceAmount !== existing.price_amount || data.currency !== existing.currency)
+    if (existing.stripe_price_id && priceChanged) {
+      const { data: teacher } = await db.from('teachers').select('stripe_account_id').eq('id', user.id).single()
+      const acct = onAccount(teacher!.stripe_account_id!)
+      const s = stripe()
+      const newPrice = await s.prices.create(
+        { product: existing.stripe_product_id!, currency: data.currency, unit_amount: data.priceAmount!, recurring: { interval: 'month' } },
+        { ...acct, idempotencyKey: `price_${existing.id}_${data.priceAmount}_${data.currency}` },
+      )
+      await s.prices.update(existing.stripe_price_id, { active: false }, acct)
+      row.stripe_price_id = newPrice.id
+    }
+  }
+
   const query = data.id
     ? db.from('classrooms').update(row).eq('id', data.id).eq('teacher_id', user.id).select().single()
     : db.from('classrooms').insert(row).select().single()
@@ -57,15 +83,23 @@ export async function publishClassroom(classroomId: string) {
   const acct = onAccount(teacher.stripe_account_id!)
   let productId = classroom.stripe_product_id
   if (!productId) {
-    const product = await s.products.create({ name: classroom.title, metadata: { classroom_id: classroom.id } }, acct)
+    const product = await s.products.create(
+      { name: classroom.title, metadata: { classroom_id: classroom.id } },
+      { ...acct, idempotencyKey: `product_${classroom.id}` },
+    )
     productId = product.id
+    // Persist immediately so a failure creating the price doesn't orphan the product.
+    await db.from('classrooms').update({ stripe_product_id: productId }).eq('id', classroom.id)
   }
   let priceId = classroom.stripe_price_id
   if (!priceId) {
-    const price = await s.prices.create({
-      product: productId, currency: classroom.currency,
-      unit_amount: classroom.price_amount!, recurring: { interval: 'month' },
-    }, acct)
+    const price = await s.prices.create(
+      {
+        product: productId, currency: classroom.currency,
+        unit_amount: classroom.price_amount!, recurring: { interval: 'month' },
+      },
+      { ...acct, idempotencyKey: `price_${classroom.id}_${classroom.price_amount}_${classroom.currency}` },
+    )
     priceId = price.id
   }
   const { error } = await db.from('classrooms')
