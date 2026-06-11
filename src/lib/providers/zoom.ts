@@ -9,7 +9,10 @@ async function tokenRequest(params: Record<string, string>): Promise<StoredToken
     headers: { Authorization: `Basic ${basicAuth()}`, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(params),
   })
-  if (!res.ok) throw new Error(`zoom token: ${res.status} ${await res.text()}`)
+  if (!res.ok) {
+    console.error(`[zoom] token request failed: ${res.status}`, await res.text())
+    throw new Error(`zoom token: ${res.status}`)
+  }
   const j = await res.json()
   return { access_token: j.access_token, refresh_token: j.refresh_token, expires_at: Date.now() + j.expires_in * 1000 }
 }
@@ -22,18 +25,23 @@ export const refreshZoom: RefreshFn = (refreshToken) =>
 
 export const zoomProvider: MeetingProvider = {
   async createMeeting({ accessToken, title, startsAt, endsAt, timezone }) {
+    const duration = Math.round((endsAt.getTime() - startsAt.getTime()) / 60000)
+    if (duration < 1) throw new Error('zoom create: duration must be >= 1 minute')
     const res = await fetch('https://api.zoom.us/v2/users/me/meetings', {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         topic: title, type: 2,
         start_time: startsAt.toISOString().replace(/\.\d{3}Z$/, 'Z'),
-        duration: Math.round((endsAt.getTime() - startsAt.getTime()) / 60000),
+        duration,
         timezone,
         settings: { waiting_room: false, join_before_host: true, approval_type: 2 },
       }),
     })
-    if (!res.ok) throw new Error(`zoom create: ${res.status} ${await res.text()}`)
+    if (!res.ok) {
+      console.error(`[zoom] create meeting failed: ${res.status}`, await res.text())
+      throw new Error(`zoom create: ${res.status}`)
+    }
     const j = await res.json()
     return { joinUrl: j.join_url, providerMeetingId: String(j.id) }
   },

@@ -10,12 +10,14 @@ export function teacherTokenStore(teacherId: string, provider: 'zoom' | 'google'
   const db = supabaseAdmin()
   return {
     async load() {
-      const { data } = await db.from('teachers').select(col).eq('id', teacherId).single()
+      const { data, error } = await db.from('teachers').select(col).eq('id', teacherId).single()
+      if (error) throw new Error(`token store load: ${error.message}`)
       const enc = (data as any)?.[col]
       return enc ? decryptJson<StoredTokens>(enc, env().TOKEN_ENC_KEY) : null
     },
     async save(tokens) {
-      await db.from('teachers').update({ [col]: encryptJson(tokens, env().TOKEN_ENC_KEY), [flag]: false }).eq('id', teacherId)
+      const { error } = await db.from('teachers').update({ [col]: encryptJson(tokens, env().TOKEN_ENC_KEY), [flag]: false }).eq('id', teacherId)
+      if (error) throw new Error(`token store save: ${error.message}`)
     },
     async markNeedsReconnect() {
       await db.from('teachers').update({ [flag]: true }).eq('id', teacherId)

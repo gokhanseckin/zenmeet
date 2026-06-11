@@ -8,7 +8,10 @@ async function tokenRequest(params: Record<string, string>): Promise<StoredToken
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: env().GOOGLE_CLIENT_ID, client_secret: env().GOOGLE_CLIENT_SECRET, ...params }),
   })
-  if (!res.ok) throw new Error(`google token: ${res.status} ${await res.text()}`)
+  if (!res.ok) {
+    console.error(`[google] token request failed: ${res.status}`, await res.text())
+    throw new Error(`google token: ${res.status}`)
+  }
   const j = await res.json()
   return {
     access_token: j.access_token,
@@ -35,7 +38,10 @@ export const googleProvider: MeetingProvider = {
         conferenceData: { createRequest: { requestId: randomUUID(), conferenceSolutionKey: { type: 'hangoutsMeet' } } },
       }),
     })
-    if (!res.ok) throw new Error(`google create: ${res.status} ${await res.text()}`)
+    if (!res.ok) {
+      console.error(`[google] create event failed: ${res.status}`, await res.text())
+      throw new Error(`google create: ${res.status}`)
+    }
     const j = await res.json()
     const joinUrl = j.hangoutLink
       ?? j.conferenceData?.entryPoints?.find((e: any) => e.entryPointType === 'video')?.uri
