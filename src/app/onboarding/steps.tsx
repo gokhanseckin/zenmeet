@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { saveTeacherAccount, setOnboardingStep } from '@/app/actions/teacher'
 import { upsertClassroom, publishClassroom } from '@/app/actions/classroom'
@@ -105,6 +106,8 @@ export function StripeStep({ connected }: { connected: boolean }) {
         </form>
       ) : (
         <div className="space-x-3">
+          {/* Route handler needs full-page navigation, not client routing. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a
             href="/api/oauth/stripe/start"
             className="inline-block rounded bg-orange-800 px-6 py-2 text-white"
@@ -260,17 +263,17 @@ export function DoneStep({ slug }: { slug?: string }) {
       {slug && (
         <p>
           Share your classroom:{' '}
-          <a className="underline text-orange-800" href={`/${slug}`}>
+          <Link className="underline text-orange-800" href={`/${slug}`}>
             zenmeet.me/{slug}
-          </a>
+          </Link>
         </p>
       )}
-      <a
+      <Link
         href="/dashboard"
         className="inline-block rounded bg-orange-800 px-6 py-2 text-white"
       >
         Go to dashboard
-      </a>
+      </Link>
     </div>
   )
 }

@@ -12,7 +12,15 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Design wireframes, not app code:
+    "Zenmeet-designs/**",
   ]),
+  {
+    rules: {
+      // Deliberate `as any` supabase-join casts until generated DB types exist.
+      "@typescript-eslint/no-explicit-any": "warn",
+    },
+  },
 ]);
 
 export default eslintConfig;

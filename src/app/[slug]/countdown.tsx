@@ -16,12 +16,17 @@ export function Countdown({ targetIso }: { targetIso: string }) {
 
   const remaining = Math.max(0, new Date(targetIso).getTime() - now)
 
-  // Mark that we observed a positive remaining value
-  if (remaining > 0) wasCounting.current = true
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Track countdown state in an effect (not during render): mark when we
+  // observe a positive remaining value; refresh exactly once on reaching zero.
   useEffect(() => {
-    if (remaining === 0 && wasCounting.current) router.refresh()
+    if (remaining > 0) {
+      wasCounting.current = true
+      return
+    }
+    if (wasCounting.current) {
+      wasCounting.current = false
+      router.refresh()
+    }
   }, [remaining === 0]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const h = Math.floor(remaining / 3_600_000)
