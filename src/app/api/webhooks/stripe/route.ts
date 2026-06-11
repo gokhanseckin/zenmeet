@@ -14,7 +14,7 @@ function supabaseWebhookDb(): WebhookDb {
     },
     async markProcessed(id) {
       const { error } = await db.from('stripe_events').insert({ id })
-      if (error && error.code !== '23505') throw new Error(error.message) // unique violation = already marked
+      if (error && error.code !== '23505') throw new Error(error.message) // 23505 = concurrent duplicate delivery; upserts are idempotent, safe to ignore
     },
     async upsertMembership(m) {
       const { error } = await db.from('memberships').upsert({
@@ -34,12 +34,14 @@ export async function POST(req: NextRequest) {
   let event
   try {
     event = stripe().webhooks.constructEvent(body, sig, env().STRIPE_WEBHOOK_SECRET)
-  } catch {
+  } catch (err) {
+    console.error('[stripe-webhook] signature verification failed', err)
     return NextResponse.json({ error: 'bad signature' }, { status: 400 })
   }
   try {
     await handleStripeEvent(event, supabaseWebhookDb())
-  } catch {
+  } catch (err) {
+    console.error('[stripe-webhook] handler error', err)
     return NextResponse.json({ error: 'handler failed' }, { status: 500 }) // Stripe retries
   }
   return NextResponse.json({ received: true })

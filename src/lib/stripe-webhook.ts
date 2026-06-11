@@ -19,7 +19,7 @@ function mapStatus(s: string): MembershipUpsert['status'] {
   if (s === 'trialing') return 'trialing'
   if (s === 'active') return 'active'
   if (s === 'past_due') return 'past_due'
-  return 'canceled' // canceled, unpaid, incomplete, incomplete_expired, paused → no access
+  return 'canceled' // canceled, unpaid, incomplete, incomplete_expired, paused → no access — paused ≠ canceled in Stripe, but no pay = no access is intentional here
 }
 
 const SUB_EVENTS = new Set([
@@ -40,6 +40,7 @@ export async function handleStripeEvent(event: Stripe.Event, db: WebhookDb): Pro
   const periodEnd: number | undefined =
     (sub as unknown as { current_period_end?: number }).current_period_end ??
     sub.items?.data?.[0]?.current_period_end
+  // No timestamp ordering guard: out-of-order deliveries can overwrite (rare; revisit with event.created if it bites)
   await db.upsertMembership({
     classroomId: classroom_id,
     studentId: student_id,
