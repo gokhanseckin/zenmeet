@@ -1,0 +1,24 @@
+---
+// Overrides Starlight's SocialIcons slot with ZenMeet header actions.
+---
+<div class="zm-actions">
+  <a class="zm-navlink" href="/for-teachers">For teachers</a>
+  <a class="zm-navlink" href="/for-students">For students</a>
+  <a class="zm-openapp" href="https://zenmeet.me">
+    Open ZenMeet
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+  </a>
+</div>
+
+<style>
+  .zm-actions { display: flex; align-items: center; gap: 16px; }
+  .zm-navlink { font-size: 14px; font-weight: 600; color: var(--sl-color-gray-2); text-decoration: none; }
+  .zm-navlink:hover { color: var(--sl-color-white); }
+  .zm-openapp {
+    display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 15px;
+    border-radius: 8px; background: var(--sl-color-accent); color: #fff;
+    font-size: 13.5px; font-weight: 600; text-decoration: none; white-space: nowrap;
+  }
+  .zm-openapp:hover { filter: brightness(1.06); }
+  @media (max-width: 50rem) { .zm-navlink { display: none; } }
+</style>
