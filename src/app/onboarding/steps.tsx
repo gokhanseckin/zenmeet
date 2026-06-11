@@ -175,7 +175,7 @@ export function ScheduleStep({
     if (!classroom) redirect('/onboarding?step=classroom')
     const priceRaw = Number(formData.get('price'))
     if (!isFinite(priceRaw) || priceRaw < 1) redirect('/onboarding?step=schedule&error=1')
-    await upsertClassroom({
+    const u = await upsertClassroom({
       id: classroom.id,
       title: classroom.title,
       slug: classroom.slug,
@@ -185,6 +185,7 @@ export function ScheduleStep({
       trialDays: 7,
       priceAmount: Math.round(priceRaw * 100),
     })
+    if ('error' in u && u.error) redirect('/onboarding?step=schedule&error=1')
     if (formData.get('localTime')) {
       await createSchedule({
         kind: 'weekly',
