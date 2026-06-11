@@ -1,11 +1,12 @@
 import { loadDashboard } from '../lib'
 import { ACTIVE_STATUSES } from '@/lib/unlock'
+import { ClassroomSwitcher } from '../switcher'
 
 export const dynamic = 'force-dynamic'
 
 export default async function PaymentsTab({ searchParams }: { searchParams: Promise<{ c?: string }> }) {
   const { c } = await searchParams
-  const { classroom, db } = await loadDashboard(c)
+  const { classroom, classrooms, db } = await loadDashboard(c)
   const { data: members } = await db.from('memberships').select('status').eq('classroom_id', classroom.id)
   const active = (members ?? []).filter(m => ACTIVE_STATUSES.has(m.status)).length
   const paying = (members ?? []).filter(m => m.status === 'active' || m.status === 'past_due').length
@@ -13,6 +14,7 @@ export default async function PaymentsTab({ searchParams }: { searchParams: Prom
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Payments</h1>
+      <ClassroomSwitcher classrooms={classrooms} currentId={classroom.id} basePath="/dashboard/payments" />
       <div className="grid grid-cols-3 gap-4">
         {([['Members', active], ['Paying', paying], ['Est. MRR', `$${mrr.toFixed(0)}`]] as const).map(([l, v]) => (
           <div key={l} className="rounded border p-4">

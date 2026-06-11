@@ -1,6 +1,7 @@
 import { loadDashboard } from './lib'
 import { publishClassroom } from '@/app/actions/classroom'
 import { canPublish } from '@/lib/publish'
+import { ClassroomSwitcher } from './switcher'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,11 +17,7 @@ export default async function ClassroomTab({ searchParams }: { searchParams: Pro
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Classroom</h1>
-      {classrooms.length > 1 && (
-        <p className="text-sm">{classrooms.map(cl => (
-          <a key={cl.id} href={`/dashboard?c=${cl.id}`} className={cl.id === classroom.id ? 'font-bold mr-3' : 'underline mr-3'}>{cl.title}</a>
-        ))}</p>
-      )}
+      <ClassroomSwitcher classrooms={classrooms} currentId={classroom.id} basePath="/dashboard" />
       {needsReconnect && (
         <div className="rounded bg-red-50 p-4 text-red-900">
           We can&apos;t create class links &mdash; please{' '}

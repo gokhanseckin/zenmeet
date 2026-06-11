@@ -1,13 +1,31 @@
 import { DateTime } from 'luxon'
 import { loadDashboard } from '../lib'
-import { createSchedule, cancelSession, setSessionLink } from '@/app/actions/schedule'
+import { createSchedule, cancelSession, setSessionLink, stopSchedule } from '@/app/actions/schedule'
 import { NewScheduleForm } from './forms'
+import { ClassroomSwitcher } from '../switcher'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ScheduleTab({ searchParams }: { searchParams: Promise<{ c?: string }> }) {
   const { c } = await searchParams
-  const { teacher, classroom, db } = await loadDashboard(c)
+  const { teacher, classroom, classrooms, db } = await loadDashboard(c)
+  // Load active schedules (filter out ended ones: until < today)
+  const today = new Date().toISOString().slice(0, 10)
+  const { data: rawSchedules } = await db.from('class_schedules')
+    .select('id, kind, weekday, local_time, duration_minutes, until')
+    .eq('classroom_id', classroom.id)
+    .or(`until.is.null,until.gte.${today}`)
+    .order('created_at')
+
+  const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+  const activeSchedules = (rawSchedules ?? []).map(s => ({
+    id: s.id as string,
+    kind: s.kind as string,
+    weekday: s.weekday as number | null,
+    localTime: s.local_time as string | null,
+    durationMinutes: s.duration_minutes as number,
+  }))
+
   const { data: rawSessions } = await db.from('sessions')
     .select('id, starts_at, ends_at, status, join_url, provision_attempts')
     .eq('classroom_id', classroom.id).eq('status', 'scheduled')
@@ -35,11 +53,33 @@ export default async function ScheduleTab({ searchParams }: { searchParams: Prom
   }
   async function cancel(fd: FormData) { 'use server'; await cancelSession(String(fd.get('id'))) }
   async function manualLink(fd: FormData) { 'use server'; await setSessionLink(String(fd.get('id')), String(fd.get('url'))) }
+  async function stop(fd: FormData) { 'use server'; await stopSchedule(String(fd.get('scheduleId'))) }
 
   const fmt = (iso: string) => DateTime.fromISO(iso).setZone(teacher.timezone).toFormat('EEE MMM d · h:mma')
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Schedule</h1>
+      <ClassroomSwitcher classrooms={classrooms} currentId={classroom.id} basePath="/dashboard/schedule" />
+      {activeSchedules.length > 0 && (
+        <div>
+          <p className="mb-2 font-mono text-xs uppercase tracking-widest text-neutral-500">Recurring rules</p>
+          <ul className="divide-y rounded border">
+            {activeSchedules.map(s => (
+              <li key={s.id} className="flex items-center justify-between gap-3 p-3 text-sm">
+                <span>
+                  {s.kind === 'weekly' && s.weekday != null
+                    ? `Weekly on ${DAYS[s.weekday]} · ${s.localTime} · ${s.durationMinutes} min`
+                    : `One-off · ${s.durationMinutes} min`}
+                </span>
+                <form action={stop}>
+                  <input type="hidden" name="scheduleId" value={s.id} />
+                  <button className="text-xs text-red-700 underline">stop</button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <NewScheduleForm classroomId={classroom.id} timezone={teacher.timezone} action={submit} />
       <ul className="divide-y rounded border">
         {sessions.map(s => (
