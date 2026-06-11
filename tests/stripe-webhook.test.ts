@@ -4,12 +4,14 @@ import { handleStripeEvent, type WebhookDb, type MembershipUpsert } from '@/lib/
 function makeDb() {
   const seen = new Set<string>()
   const upserts: MembershipUpsert[] = []
+  const cleared: string[] = []
   const db: WebhookDb = {
     async wasProcessed(id) { return seen.has(id) },
     async markProcessed(id) { seen.add(id) },
     async upsertMembership(m) { upserts.push(m) },
+    async clearStripeAccount(accountId) { cleared.push(accountId) },
   }
-  return { db, upserts }
+  return { db, upserts, cleared }
 }
 
 const subEvent = (id: string, status: string, type = 'customer.subscription.updated') => ({
@@ -53,6 +55,40 @@ describe('handleStripeEvent', () => {
     await handleStripeEvent(e, ctx.db)
     expect(ctx.upserts).toHaveLength(0)
   })
+  it('clears the teacher stripe account on account.application.deauthorized', async () => {
+    const e = { id: 'evt_da1', type: 'account.application.deauthorized', account: 'acct_T9', data: { object: { id: 'ca_app' } } } as any
+    await handleStripeEvent(e, ctx.db)
+    expect(ctx.cleared).toEqual(['acct_T9'])
+    expect(ctx.upserts).toHaveLength(0) // existing student memberships left intact
+  })
+  it('is idempotent on deauthorized event id', async () => {
+    const e = { id: 'evt_da2', type: 'account.application.deauthorized', account: 'acct_T9', data: { object: { id: 'ca_app' } } } as any
+    await handleStripeEvent(e, ctx.db)
+    await handleStripeEvent(e, ctx.db)
+    expect(ctx.cleared).toEqual(['acct_T9'])
+  })
+  it('ignores a deauthorized event with no account', async () => {
+    const e = { id: 'evt_da3', type: 'account.application.deauthorized', data: { object: { id: 'ca_app' } } } as any
+    await handleStripeEvent(e, ctx.db)
+    expect(ctx.cleared).toHaveLength(0)
+  })
+  it('a failed clear is retryable (id not recorded until success)', async () => {
+    let calls = 0
+    const seen = new Set<string>()
+    const cleared: string[] = []
+    const db: WebhookDb = {
+      wasProcessed: async (id) => seen.has(id),
+      markProcessed: async (id) => { seen.add(id) },
+      upsertMembership: async () => {},
+      clearStripeAccount: async (a) => { calls++; if (calls === 1) throw new Error('db down'); cleared.push(a) },
+    }
+    const e = { id: 'evt_da4', type: 'account.application.deauthorized', account: 'acct_T9', data: { object: { id: 'ca_app' } } } as any
+    await expect(handleStripeEvent(e, db)).rejects.toThrow('db down')
+    await handleStripeEvent(e, db) // Stripe retry
+    expect(cleared).toEqual(['acct_T9'])
+    await handleStripeEvent(e, db) // duplicate delivery
+    expect(cleared).toHaveLength(1)
+  })
   it('a failed upsert is retryable (id not recorded until success)', async () => {
     let calls = 0
     const seen = new Set<string>()
@@ -61,6 +97,7 @@ describe('handleStripeEvent', () => {
       wasProcessed: async (id) => seen.has(id),
       markProcessed: async (id) => { seen.add(id) },
       upsertMembership: async (m) => { calls++; if (calls === 1) throw new Error('db down'); upserts.push(m) },
+      clearStripeAccount: async () => {},
     }
     await expect(handleStripeEvent(subEvent('evt_r', 'active'), db)).rejects.toThrow('db down')
     await handleStripeEvent(subEvent('evt_r', 'active'), db) // Stripe retry

@@ -13,6 +13,8 @@ export interface WebhookDb {
   /** Record successful processing (idempotent). */
   markProcessed(eventId: string): Promise<void>
   upsertMembership(m: MembershipUpsert): Promise<void>
+  /** Clear stripe_account_id on any teacher holding this connected account id. */
+  clearStripeAccount(accountId: string): Promise<void>
 }
 
 function mapStatus(s: string): MembershipUpsert['status'] {
@@ -32,6 +34,18 @@ const SUB_EVENTS = new Set([
 type SubItem = { current_period_end?: number }
 
 export async function handleStripeEvent(event: Stripe.Event, db: WebhookDb): Promise<void> {
+  // Teacher revoked our Connect access. Clear their stripe_account_id so checkout/
+  // onboarding gates force a reconnect. We deliberately leave existing student
+  // memberships intact — deauthorization is often accidental/temporary and cutting
+  // off paying students immediately is punitive; clearing the id already blocks new checkouts.
+  if (event.type === 'account.application.deauthorized') {
+    const accountId = event.account
+    if (!accountId) return
+    if (await db.wasProcessed(event.id)) return
+    await db.clearStripeAccount(accountId)
+    await db.markProcessed(event.id)
+    return
+  }
   if (!SUB_EVENTS.has(event.type)) return
   const sub = event.data.object as Stripe.Subscription & { items?: { data: SubItem[] } }
   const { classroom_id, student_id } = (sub.metadata ?? {}) as Record<string, string>
