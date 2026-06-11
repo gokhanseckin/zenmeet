@@ -1,36 +1,120 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Zenmeet
 
-## Getting Started
+Teachers run paid live classes using their own video conferencing accounts (Zoom or Google Meet) and collect payments through their own Stripe account via Stripe Connect Standard. Students subscribe to a teacher's channel; the meeting link unlocks 5 minutes before the session starts and is visible only to active members.
 
-First, run the development server:
+## Architecture
+
+- **Next.js App Router on Vercel** — all pages and API routes; middleware enforces auth + membership gates.
+- **Supabase Postgres + Auth** — database, row-level security, magic-link email auth (token-hash flow).
+- **GitHub Actions cron → `/api/cron/tick`** — polls every 10 minutes to publish upcoming sessions and unlock meeting links.
+- **Stripe Checkout + webhooks on connected accounts** — teachers onboard via Stripe Connect Standard; subscriptions and webhooks run on each connected account.
+- **Zoom Marketplace app + Google Cloud Console OAuth client** — per-session meeting links fetched at unlock time using each teacher's stored OAuth tokens.
+
+## Local Setup
+
+### 1. Clone and install
+
+```bash
+git clone <repo-url>
+cd Zenmeet
+npm install
+```
+
+### 2. Environment variables
+
+Copy `.env.example` to `.env.local` and fill in each value:
+
+```bash
+cp .env.example .env.local
+```
+
+| Variable | Where to get it |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase dashboard → Project Settings → API → Project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase dashboard → Project Settings → API → `anon` `public` key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase dashboard → Project Settings → API → `service_role` key (keep secret) |
+| `APP_URL` | `http://localhost:3000` for local; production URL when deploying |
+| `CRON_SECRET` | Generate: `openssl rand -hex 32` (must be ≥ 16 chars) |
+| `TOKEN_ENC_KEY` | Generate: `openssl rand -base64 32` (base64 of 32 bytes) |
+| `STRIPE_SECRET_KEY` | Stripe dashboard → Developers → API keys → Secret key |
+| `STRIPE_CONNECT_CLIENT_ID` | Stripe dashboard → Connect → Settings → Client ID (`ca_…`) |
+| `STRIPE_WEBHOOK_SECRET` | Created when you register the webhook endpoint (see below) |
+| `ZOOM_CLIENT_ID` | Zoom Marketplace → your OAuth app → App Credentials |
+| `ZOOM_CLIENT_SECRET` | Zoom Marketplace → your OAuth app → App Credentials |
+| `GOOGLE_CLIENT_ID` | Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID |
+| `GOOGLE_CLIENT_SECRET` | Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client Secret |
+
+### 3. Apply database migrations
+
+Three migration files live in `supabase/migrations/`:
+
+- `0001_init.sql`
+- `0002_security_fixes.sql`
+- `0003_increment_attempts.sql`
+
+Run them in order via the Supabase SQL editor (dashboard → SQL Editor) or the Supabase MCP tool (`apply_migration`).
+
+### 4. Supabase Auth configuration
+
+In the Supabase dashboard → Authentication → Providers:
+
+- Enable the **Email** provider.
+- Set **Site URL** to your `APP_URL` (e.g. `http://localhost:3000`).
+- Edit the **magic link email template** to use the token-hash flow (required for `src/app/auth/confirm/route.ts`):
+
+```
+{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email
+```
+
+### 5. Stripe webhooks (local)
+
+```bash
+stripe listen --forward-to localhost:3000/api/webhooks/stripe
+```
+
+Copy the webhook signing secret printed by the CLI into `STRIPE_WEBHOOK_SECRET` in `.env.local`.
+
+### 6. Run
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## How the Cron Works
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+`.github/workflows/cron.yml` triggers on a `*/10 * * * *` schedule (and supports `workflow_dispatch` for manual runs). Each run makes a POST to `/api/cron/tick` with an `Authorization: Bearer <CRON_SECRET>` header.
 
-## Learn More
+The route publishes sessions whose start time is within the upcoming window and unlocks meeting links for sessions starting within 5 minutes. Unlock is computed at request time — jitter in cron scheduling does not cause missed unlocks.
 
-To learn more about Next.js, take a look at the following resources:
+**Required repo settings:**
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Setting | Value |
+|---|---|
+| Secret `CRON_SECRET` | Same value as the env var |
+| Variable `APP_URL` | Production URL (e.g. `https://your-app.vercel.app`) |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Set these under Repository → Settings → Secrets and variables → Actions.
 
-## Deploy on Vercel
+## Testing
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm test
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Runs 9 test files / 50 unit and handler tests using Vitest with in-memory fakes (no real DB, Stripe, or video API calls).
+
+## Launch Checklist
+
+Before going live, verify each item:
+
+- [ ] **Supabase Site URL** — set to production `APP_URL` in Authentication → URL Configuration.
+- [ ] **Supabase magic-link email template** — updated to token-hash URL (see Local Setup §4).
+- [ ] **Stripe webhook endpoint** — register `https://<prod-url>/api/webhooks/stripe` in Stripe dashboard; under "Listen to events on Connected accounts" enable: `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`; copy the signing secret into `STRIPE_WEBHOOK_SECRET`.
+- [ ] **Stripe Connect OAuth redirect URI** — add `https://<prod-url>/api/oauth/stripe/callback` in Stripe → Connect → Settings → Redirect URIs.
+- [ ] **Zoom app redirect URI** — add `https://<prod-url>/api/oauth/zoom/callback` in Zoom Marketplace app settings; submit for marketplace review if publishing publicly.
+- [ ] **Google OAuth redirect URI** — add `https://<prod-url>/api/oauth/google/callback` in Google Cloud Console → Credentials; complete verification review for the `calendar.events` scope if publishing to all users.
+- [ ] **Vercel env vars** — all 13 variables set to production values in Vercel project settings.
+- [ ] **GitHub secrets/vars** — `CRON_SECRET` secret and `APP_URL` variable set in repo Actions settings.
+- [ ] **Stripe customer portal** — teachers must enable the customer portal on their own Stripe account so students can manage subscriptions.
