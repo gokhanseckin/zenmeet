@@ -7,6 +7,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'ZenMeet Docs',
+      favicon: '/favicon.png',
       logo: {
         src: './src/assets/zenmeet-mark.png',
         alt: 'ZenMeet',
