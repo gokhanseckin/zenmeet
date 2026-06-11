@@ -23,14 +23,15 @@ export async function POST(req: NextRequest) {
 
   // Already an active member? Send to member home instead of double-subscribing.
   const { data: existing } = await db.from('memberships').select('status')
-    .eq('student_id', user.id).eq('classroom_id', classroom.id).single()
+    .eq('student_id', user.id).eq('classroom_id', classroom.id).maybeSingle()
   if (existing && existing.status !== 'canceled') return NextResponse.json({ redirect: `/my/${slug}` })
 
   const session = await stripe().checkout.sessions.create({
     mode: 'subscription',
     line_items: [{ price: classroom.stripe_price_id, quantity: 1 }],
     subscription_data: {
-      trial_period_days: classroom.trial_days > 0 ? classroom.trial_days : undefined,
+      // trial only on first-ever subscribe — cancel/re-subscribe doesn't restart it
+      trial_period_days: classroom.trial_days > 0 && !existing ? classroom.trial_days : undefined,
       metadata: { classroom_id: classroom.id, student_id: user.id },
     },
     customer_email: user.email ?? undefined,

@@ -28,6 +28,10 @@ export async function getFreshMembership(args: {
   if (!subId) return existing ?? null
 
   const sub = await stripe().subscriptions.retrieve(subId, {}, onAccount(args.stripeAccountId))
+  const meta = (sub.metadata ?? {}) as Record<string, string>
+  if (meta.student_id !== args.studentId || meta.classroom_id !== args.classroomId) {
+    return existing ?? null // cs/subscription belongs to someone else — do not mint a membership
+  }
   const status = sub.status === 'trialing' ? 'trialing' : sub.status === 'active' ? 'active'
     : sub.status === 'past_due' ? 'past_due' : 'canceled'
 

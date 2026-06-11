@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
     .select('id, teachers!inner(stripe_account_id)').eq('slug', slug).single()
   if (!classroom) return NextResponse.json({ error: 'not found' }, { status: 404 })
   const { data: membership } = await db.from('memberships').select('stripe_customer_id')
-    .eq('student_id', user.id).eq('classroom_id', classroom.id).single()
+    .eq('student_id', user.id).eq('classroom_id', classroom.id).maybeSingle()
   if (!membership?.stripe_customer_id) return NextResponse.json({ error: 'no membership' }, { status: 404 })
   const portal = await stripe().billingPortal.sessions.create({
     customer: membership.stripe_customer_id,
