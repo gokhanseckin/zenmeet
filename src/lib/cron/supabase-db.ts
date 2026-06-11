@@ -43,12 +43,13 @@ export function supabaseCronDb(): CronDb {
 
     async listSessionsNeedingLinks(withinMs, asOf) {
       // Filter: asOf - PROVISION_GRACE_MS < starts_at <= asOf + withinMs
-      // Include attempts <= MAX_ATTEMPTS so runTick can log the first-time abandonment
+      // Strictly attempts < MAX_ATTEMPTS: permanently-failed sessions simply stop
+      // being listed; runTick's abandoned counter remains a belt-and-braces guard.
       const { data, error } = await db.from('sessions')
         .select('id, starts_at, ends_at, provision_attempts, classrooms!inner(id, title, provider, teacher_id, teachers!inner(id, timezone))')
         .eq('status', 'scheduled')
         .is('join_url', null)
-        .lt('provision_attempts', MAX_ATTEMPTS + 1)
+        .lt('provision_attempts', MAX_ATTEMPTS)
         .gt('starts_at', new Date(asOf.getTime() - PROVISION_GRACE_MS).toISOString())
         .lte('starts_at', new Date(asOf.getTime() + withinMs).toISOString())
       if (error) throw new Error(error.message)
@@ -77,12 +78,8 @@ export function supabaseCronDb(): CronDb {
     },
 
     async bumpAttempts(id) {
-      const { data, error } = await db.from('sessions').select('provision_attempts').eq('id', id).single()
+      const { error } = await db.rpc('increment_provision_attempts', { session_id: id })
       if (error) throw new Error(error.message)
-      const { error: updateError } = await db.from('sessions')
-        .update({ provision_attempts: (data?.provision_attempts ?? 0) + 1 })
-        .eq('id', id)
-      if (updateError) throw new Error(updateError.message)
     },
 
     async markPastSessionsDone(asOf) {
