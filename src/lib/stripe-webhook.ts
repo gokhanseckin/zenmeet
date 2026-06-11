@@ -8,8 +8,10 @@ export type MembershipUpsert = {
 }
 
 export interface WebhookDb {
-  /** Returns false if this event id was already processed. */
-  recordEventOnce(eventId: string): Promise<boolean>
+  /** True if this event id has already been fully processed. */
+  wasProcessed(eventId: string): Promise<boolean>
+  /** Record successful processing (idempotent). */
+  markProcessed(eventId: string): Promise<void>
   upsertMembership(m: MembershipUpsert): Promise<void>
 }
 
@@ -30,11 +32,11 @@ const SUB_EVENTS = new Set([
 type SubItem = { current_period_end?: number }
 
 export async function handleStripeEvent(event: Stripe.Event, db: WebhookDb): Promise<void> {
-  if (!(await db.recordEventOnce(event.id))) return
   if (!SUB_EVENTS.has(event.type)) return
   const sub = event.data.object as Stripe.Subscription & { items?: { data: SubItem[] } }
   const { classroom_id, student_id } = (sub.metadata ?? {}) as Record<string, string>
   if (!classroom_id || !student_id) return
+  if (await db.wasProcessed(event.id)) return
   const periodEnd: number | undefined =
     (sub as unknown as { current_period_end?: number }).current_period_end ??
     sub.items?.data?.[0]?.current_period_end
@@ -46,4 +48,5 @@ export async function handleStripeEvent(event: Stripe.Event, db: WebhookDb): Pro
     status: event.type === 'customer.subscription.deleted' ? 'canceled' : mapStatus(sub.status),
     currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : null,
   })
+  await db.markProcessed(event.id)
 }

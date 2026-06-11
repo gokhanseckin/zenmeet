@@ -5,7 +5,8 @@ function makeDb() {
   const seen = new Set<string>()
   const upserts: MembershipUpsert[] = []
   const db: WebhookDb = {
-    async recordEventOnce(id) { if (seen.has(id)) return false; seen.add(id); return true },
+    async wasProcessed(id) { return seen.has(id) },
+    async markProcessed(id) { seen.add(id) },
     async upsertMembership(m) { upserts.push(m) },
   }
   return { db, upserts }
@@ -51,5 +52,20 @@ describe('handleStripeEvent', () => {
     const e = subEvent('evt_6', 'active'); e.data.object.metadata = {}
     await handleStripeEvent(e, ctx.db)
     expect(ctx.upserts).toHaveLength(0)
+  })
+  it('a failed upsert is retryable (id not recorded until success)', async () => {
+    let calls = 0
+    const seen = new Set<string>()
+    const upserts: MembershipUpsert[] = []
+    const db: WebhookDb = {
+      wasProcessed: async (id) => seen.has(id),
+      markProcessed: async (id) => { seen.add(id) },
+      upsertMembership: async (m) => { calls++; if (calls === 1) throw new Error('db down'); upserts.push(m) },
+    }
+    await expect(handleStripeEvent(subEvent('evt_r', 'active'), db)).rejects.toThrow('db down')
+    await handleStripeEvent(subEvent('evt_r', 'active'), db) // Stripe retry
+    expect(upserts).toHaveLength(1)
+    await handleStripeEvent(subEvent('evt_r', 'active'), db) // duplicate delivery
+    expect(upserts).toHaveLength(1)
   })
 })

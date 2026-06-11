@@ -7,9 +7,14 @@ import { handleStripeEvent, type WebhookDb } from '@/lib/stripe-webhook'
 function supabaseWebhookDb(): WebhookDb {
   const db = supabaseAdmin()
   return {
-    async recordEventOnce(id) {
+    async wasProcessed(id) {
+      const { data, error } = await db.from('stripe_events').select('id').eq('id', id).maybeSingle()
+      if (error) throw new Error(error.message)
+      return !!data
+    },
+    async markProcessed(id) {
       const { error } = await db.from('stripe_events').insert({ id })
-      return !error // unique violation → already processed
+      if (error && error.code !== '23505') throw new Error(error.message) // unique violation = already marked
     },
     async upsertMembership(m) {
       const { error } = await db.from('memberships').upsert({
