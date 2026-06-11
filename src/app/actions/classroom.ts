@@ -35,6 +35,7 @@ export async function upsertClassroom(input: z.infer<typeof upsertSchema>) {
     currency: data.currency, trial_days: data.trialDays,
   }
 
+  let deactivateOldPrice: (() => Promise<unknown>) | null = null
   if (data.id) {
     // If the price/currency changed on a classroom that already has a live Stripe price,
     // mint a replacement price on the connected account and deactivate the old one,
@@ -53,7 +54,18 @@ export async function upsertClassroom(input: z.infer<typeof upsertSchema>) {
         { product: existing.stripe_product_id!, currency: data.currency, unit_amount: data.priceAmount!, recurring: { interval: 'month' } },
         { ...acct, idempotencyKey: `price_${existing.id}_${data.priceAmount}_${data.currency}` },
       )
-      await s.prices.update(existing.stripe_price_id, { active: false }, acct)
+      if (newPrice.id === existing.stripe_price_id) {
+        // Idempotency replay on a price revert: Stripe cached the original create
+        // (~24h) and returned the price we deactivated during the earlier edit.
+        // The cached response claims active:true regardless of reality, so always
+        // force-reactivate instead of trusting newPrice.active.
+        await s.prices.update(newPrice.id, { active: true }, acct)
+      } else {
+        // Deactivate only AFTER the row update succeeds, so a failed write
+        // (e.g. slug conflict) can't leave the row pointing at a deactivated price.
+        const oldPriceId = existing.stripe_price_id
+        deactivateOldPrice = () => s.prices.update(oldPriceId, { active: false }, acct)
+      }
       row.stripe_price_id = newPrice.id
     }
   }
@@ -63,6 +75,7 @@ export async function upsertClassroom(input: z.infer<typeof upsertSchema>) {
     : db.from('classrooms').insert(row).select().single()
   const { data: classroom, error } = await query
   if (error) return { error: error.code === '23505' ? 'That URL is taken — pick another slug.' : error.message }
+  if (deactivateOldPrice) await deactivateOldPrice()
   revalidatePath('/dashboard')
   return { classroom }
 }
