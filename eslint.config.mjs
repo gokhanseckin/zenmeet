@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Design wireframes, not app code:
     "Zenmeet-designs/**",
+    // Claude worktrees (e.g. docs-site branch) are separate projects, not app code:
+    ".claude/**",
   ]),
   {
     rules: {
