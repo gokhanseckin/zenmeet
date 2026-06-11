@@ -31,12 +31,20 @@ export const PROVISION_WINDOW_MS = 60 * 60_000
 export const MAX_ATTEMPTS = 10
 
 export async function runTick(db: CronDb, creator: MeetingCreator, now = new Date()) {
-  // 1. Materialize
+  // 1. Materialize (each schedule isolated; one bad rule must not block the rest)
   const schedules = await db.listActiveSchedules()
-  const rows: NewSessionRow[] = schedules.flatMap(s =>
-    materializeOccurrences(s.rule, now, MATERIALIZE_DAYS).map(o => ({
-      scheduleId: s.scheduleId, classroomId: s.classroomId, startsAt: o.startsAt, endsAt: o.endsAt,
-    })))
+  let scheduleErrors = 0
+  const rows: NewSessionRow[] = []
+  for (const s of schedules) {
+    try {
+      rows.push(...materializeOccurrences(s.rule, now, MATERIALIZE_DAYS).map(o => ({
+        scheduleId: s.scheduleId, classroomId: s.classroomId, startsAt: o.startsAt, endsAt: o.endsAt,
+      })))
+    } catch (e) {
+      scheduleErrors++
+      console.error('[cron] materialization failed for schedule', s.scheduleId, e)
+    }
+  }
   const materialized = rows.length ? await db.insertSessionsIgnoreDupes(rows) : 0
 
   // 2. Provision links (each failure isolated; retried next tick)
@@ -56,5 +64,5 @@ export async function runTick(db: CronDb, creator: MeetingCreator, now = new Dat
 
   // 3. Sweep
   await db.markPastSessionsDone(now)
-  return { materialized, provisioned, provisionErrors }
+  return { materialized, provisioned, provisionErrors, scheduleErrors }
 }

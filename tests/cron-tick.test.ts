@@ -73,4 +73,25 @@ describe('runTick', () => {
     const s = [...world.sessions.values()].find(s => s.startsAt.toISOString() === '2026-06-15T11:00:00.000Z')
     expect(s.status).toBe('done')
   })
+  it('isolates a bad schedule: valid schedules still materialize, scheduleErrors counted', async () => {
+    const badDb: CronDb = {
+      ...world.db,
+      async listActiveSchedules() {
+        return [
+          {
+            scheduleId: 'sch-bad', classroomId: 'cls-bad', title: 'Broken', timezone: 'Bad/Zone',
+            rule: { kind: 'weekly', weekday: 1, localTime: '07:00', durationMinutes: 60, timezone: 'Bad/Zone', until: null },
+          },
+          {
+            scheduleId: 'sch-1', classroomId: 'cls-1', title: 'Morning Vinyasa', timezone: 'America/New_York',
+            rule: { kind: 'weekly', weekday: 1, localTime: '07:00', durationMinutes: 60, timezone: 'America/New_York', until: null },
+          },
+        ]
+      },
+    }
+    const r = await runTick(badDb, { createMeeting: okCreate }, now)
+    expect(r.scheduleErrors).toBe(1)
+    expect(r.materialized).toBeGreaterThanOrEqual(4) // valid schedule unaffected
+    expect([...world.sessions.keys()].every(k => k.startsWith('sch-1|'))).toBe(true)
+  })
 })
