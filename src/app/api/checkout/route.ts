@@ -3,6 +3,7 @@ import { getUser, ensureStudent } from '@/lib/auth'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { stripe, onAccount } from '@/lib/stripe'
 import { env } from '@/lib/env'
+import { shouldGrantTrial } from '@/lib/trial'
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
@@ -31,7 +32,7 @@ export async function POST(req: NextRequest) {
     line_items: [{ price: classroom.stripe_price_id, quantity: 1 }],
     subscription_data: {
       // trial only on first-ever subscribe — cancel/re-subscribe doesn't restart it
-      trial_period_days: classroom.trial_days > 0 && !existing ? classroom.trial_days : undefined,
+      trial_period_days: shouldGrantTrial(classroom.trial_days, !!existing) ? classroom.trial_days : undefined,
       metadata: { classroom_id: classroom.id, student_id: user.id },
     },
     customer_email: user.email ?? undefined,

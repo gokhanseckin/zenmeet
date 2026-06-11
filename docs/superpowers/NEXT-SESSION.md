@@ -23,5 +23,18 @@ Magic-link auth · teacher wizard → publish (Stripe Connect + Google connected
 6. **Zoom** — `ZOOM_CLIENT_ID`/`ZOOM_CLIENT_SECRET` are placeholders; configure a Zoom app only if offering Zoom classrooms.
 7. **Minor:** onboarding `display_name` is saved blank (investigate `saveTeacherAccount`); Next 16 deprecates the `middleware` convention → rename `src/middleware.ts` to `proxy`.
 
+## Update — 2026-06-11 (session 2)
+Worked the launch follow-ups. Status:
+- **#1 Email (Resend):** ✅ Done. `zenmeet.me` verified in Resend (SPF/DKIM/DMARC, eu-west-1); custom SMTP wired into Supabase Auth (`smtp.resend.com:465`, user `resend`); real magic-link email **delivered to inbox** (sender `noreply@zenmeet.me`). Auth email rate limit now 30/hr.
+- **#2 Google consent:** ✅ Published to production (refresh tokens no longer expire at 7 days). Still unverified for the Calendar sensitive scope → "unverified app" screen + 100-user cap until full verification (separate later step).
+- **#3 Prod OAuth redirect URIs:** ✅ Canonical domain set to **`https://www.zenmeet.me`** (apex 308s to www; `APP_URL` updated + prod redeployed). Registered Google + Stripe Connect callbacks for `www.zenmeet.me` (+ `zenmeet.vercel.app` backup); Stripe verified live. Supabase Auth Site URL + redirect allow-list updated to include `www.zenmeet.me/**`.
+- **#7 Minor fixes:** ✅ [PR #2](https://github.com/gokhanseckin/zenmeet/pull/2) — `display_name` blank root cause was the `teachers.onboarding_step` default (`'classroom'` instead of first step `'account'`), fixed by migration `0004` (applied to prod DB); `middleware.ts` → `proxy.ts` for Next 16.
+- **#5 Stripe sandbox testing:** ✅ All scenarios pass in test mode (trial→active, cancel→deleted+join-lost, declined-card dunning→past_due via test clock, billing portal, multi-student, replay/idempotency + bad-sig→400). Verified membership rows + join gating throughout. First-trial-only gate locked by a unit test (extracted `src/lib/trial.ts`). **Go-live still deferred** to a later session.
+
+### Findings from #5 (still open)
+- **`account.application.deauthorized` is NOT handled** — webhook only handles `customer.subscription.{created,updated,deleted}`. When a teacher revokes Connect, `teachers.stripe_account_id` is left stale (future checkouts/portal would break). **TODO:** add a handler (clear `stripe_account_id`; decide whether to revoke memberships). Deferred by choice this session.
+- **`past_due` grants join access** (it's in `ACTIVE_STATUSES`) — confirmed **intentional** (grace period during dunning). Leave as-is.
+- **Stray worktree** `.claude/worktrees/nice-sanderson-93c0c7` (branch `claude/nice-sanderson-93c0c7`, "Zenmeet-designs") pollutes bare `eslint` with ~33 errors from generated/old JSX. Real `src`/`tests` lint clean (0 errors). Remove the worktree or add `.claude/**` to eslint ignores.
+
 ## Security reminder
 A Supabase **Personal Access Token** (`sbp_…`) was used this session for auth-config + webhook setup. If you haven't already, **revoke it**: https://supabase.com/dashboard/account/tokens — auth config is now set and the app uses only the project keys at runtime. All other secrets live in `.env.local` (gitignored) and Vercel Production env.
