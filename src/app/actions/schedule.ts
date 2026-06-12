@@ -7,6 +7,8 @@ import { teacherTokenStore } from '@/lib/providers/store'
 import { getValidAccessToken } from '@/lib/providers/tokens'
 import { zoomProvider, refreshZoom } from '@/lib/providers/zoom'
 import { googleProvider, refreshGoogle } from '@/lib/providers/google'
+import { materializeOccurrences, type ScheduleRule } from '@/lib/recurrence'
+import { MATERIALIZE_DAYS } from '@/lib/cron/tick'
 
 const scheduleSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('one_off'), classroomId: z.string().uuid(),
@@ -21,6 +23,46 @@ async function assertOwnsClassroom(userId: string, classroomId: string) {
   return data
 }
 
+type SupabaseAdmin = ReturnType<typeof supabaseAdmin>
+
+/**
+ * Materialize and insert session rows for a freshly-created schedule, using the
+ * same recurrence helper and ignore-dupes upsert (unique schedule_id,starts_at)
+ * the cron uses, so synchronous creation and later cron ticks never double-insert.
+ */
+async function materializeScheduleSessions(
+  db: SupabaseAdmin,
+  scheduleId: string,
+  data: z.infer<typeof scheduleSchema>,
+) {
+  let rule: ScheduleRule
+  if (data.kind === 'one_off') {
+    rule = { kind: 'one_off', startsAt: data.startsAt, durationMinutes: data.durationMinutes }
+  } else {
+    // Weekly rules need the teacher's timezone (same source the cron reads).
+    const { data: cls, error } = await db.from('classrooms')
+      .select('teachers!inner(timezone)').eq('id', data.classroomId).single()
+    if (error || !cls) throw new Error(error?.message ?? 'classroom timezone not found')
+    rule = {
+      kind: 'weekly', weekday: data.weekday, localTime: data.localTime,
+      durationMinutes: data.durationMinutes, timezone: (cls as any).teachers.timezone, until: data.until,
+    }
+  }
+
+  const occ = materializeOccurrences(rule, new Date(), MATERIALIZE_DAYS)
+  if (!occ.length) return
+  const { error } = await db.from('sessions').upsert(
+    occ.map(o => ({
+      schedule_id: scheduleId,
+      classroom_id: data.classroomId,
+      starts_at: o.startsAt.toISOString(),
+      ends_at: o.endsAt.toISOString(),
+    })),
+    { onConflict: 'schedule_id,starts_at', ignoreDuplicates: true },
+  )
+  if (error) throw new Error(error.message)
+}
+
 export async function createSchedule(input: z.infer<typeof scheduleSchema>) {
   const user = await requireUser('/dashboard')
   const parsed = scheduleSchema.safeParse(input)
@@ -29,10 +71,26 @@ export async function createSchedule(input: z.infer<typeof scheduleSchema>) {
   const classroom = await assertOwnsClassroom(user.id, data.classroomId)
   if (!classroom) return { error: 'Not found' }
   const db = supabaseAdmin()
-  const { error } = data.kind === 'one_off'
-    ? await db.from('class_schedules').insert({ classroom_id: data.classroomId, kind: 'one_off', starts_at: data.startsAt, duration_minutes: data.durationMinutes })
-    : await db.from('class_schedules').insert({ classroom_id: data.classroomId, kind: 'weekly', weekday: data.weekday, local_time: data.localTime, duration_minutes: data.durationMinutes, until: data.until })
-  if (error) return { error: error.message }
+  const { data: created, error } = data.kind === 'one_off'
+    ? await db.from('class_schedules').insert({ classroom_id: data.classroomId, kind: 'one_off', starts_at: data.startsAt, duration_minutes: data.durationMinutes }).select('id').single()
+    : await db.from('class_schedules').insert({ classroom_id: data.classroomId, kind: 'weekly', weekday: data.weekday, local_time: data.localTime, duration_minutes: data.durationMinutes, until: data.until }).select('id').single()
+  if (error || !created) return { error: error?.message ?? 'Failed to create schedule' }
+
+  // Materialize occurrences synchronously so an ad-hoc class starting within one
+  // cron period (10 min) gets a session row immediately. The 10-min pg_cron tick
+  // windows forward from `now`, so a near-term occurrence can fall behind the
+  // window before any tick lands and would never be materialized otherwise.
+  // We follow the cron's exact ignore-dupes path (unique schedule_id,starts_at):
+  // a later tick re-inserting the same occurrences is a no-op, keeping this
+  // idempotent with the cron and never double-inserting.
+  try {
+    await materializeScheduleSessions(db, created.id, data)
+  } catch (e) {
+    // Non-fatal: the schedule rule is persisted; the next cron tick will
+    // materialize sessions whose start is still ahead of its window.
+    console.error('[schedule] synchronous materialization failed', created.id, e)
+  }
+
   revalidatePath('/dashboard/schedule')
   return { ok: true }
 }

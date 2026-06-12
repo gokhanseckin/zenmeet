@@ -37,7 +37,25 @@ export interface MeetingCreator {
 
 export const MATERIALIZE_DAYS = 30
 export const PROVISION_WINDOW_MS = 60 * 60_000
-export const PROVISION_GRACE_MS = 60_000
+/** The pg_cron tick fires every 10 min. */
+export const TICK_PERIOD_MS = 10 * 60_000
+/**
+ * How long after a session's start it remains eligible for link provisioning.
+ *
+ * This MUST be >= the tick period: a session whose start falls between two ticks
+ * (or whose first provisioning attempt failed) must survive in
+ * listSessionsNeedingLinks long enough for the next tick to (re)provision it,
+ * otherwise it silently falls out of the window and never gets a join_url.
+ *
+ * Ideally a session stays provisionable for its full duration (until ends_at),
+ * since members can still join an in-progress class. We express that the simple
+ * way here — a flat grace of TWO tick periods — rather than switching the DB
+ * query's lower bound from starts_at to ends_at: keeping the bound on starts_at
+ * preserves the documented (starts_at-based) CronDb contract and the existing
+ * idempotent CAS provisioning path, while 2x the tick period comfortably spans
+ * any single inter-tick gap plus one retry for the common short-class case.
+ */
+export const PROVISION_GRACE_MS = 2 * TICK_PERIOD_MS
 export const MAX_ATTEMPTS = 10
 
 export async function runTick(db: CronDb, creator: MeetingCreator, now = new Date()) {
