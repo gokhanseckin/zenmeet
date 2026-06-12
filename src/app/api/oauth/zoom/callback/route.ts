@@ -16,7 +16,17 @@ export async function GET(req: NextRequest) {
   const state = url.searchParams.get('state')
   const cookieState = req.cookies.get('oauth_state_zoom')?.value
   const user = await getUser()
-  if (!user || !code || !state || !cookieState || state !== cookieState) {
+  // CSRF: nonce double-submit (state === cookieState) AND the user-id bound
+  // into the state at /start must match the current session's user.
+  const boundUserId = state?.split('.')[1]
+  if (
+    !user ||
+    !code ||
+    !state ||
+    !cookieState ||
+    state !== cookieState ||
+    boundUserId !== user.id
+  ) {
     return redirectClearingState(new URL('/onboarding?step=provider&error=oauth', req.url))
   }
   try {

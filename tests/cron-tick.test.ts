@@ -71,6 +71,22 @@ describe('runTick', () => {
     await runTick(world.db, { createMeeting: okCreate }, new Date(now.getTime() + 10 * 60_000))
     expect(s.joinUrl).toBe('https://meet.google.com/abc')
   })
+  it('still provisions a session whose pre-start attempt failed and which just started (grace >= tick period)', async () => {
+    // Session at 11:00Z. The pre-start tick's createMeeting fails, leaving join_url
+    // NULL. The next tick lands at 11:05Z — 5 min AFTER start. With the old 60s
+    // grace this session would have dropped out of listSessionsNeedingLinks and
+    // never been provisioned while members are still in the join window.
+    const fail = vi.fn(async () => { throw new Error('api down') })
+    await runTick(world.db, { createMeeting: fail }, now) // materialize + failed provision at 10:30Z
+    const s = [...world.sessions.values()].find(s => s.startsAt.toISOString() === '2026-06-15T11:00:00.000Z')
+    expect(s.joinUrl).toBeNull()
+    const justAfter = new Date('2026-06-15T11:05:00Z')
+    expect(justAfter.getTime() - new Date('2026-06-15T11:00:00Z').getTime()).toBeLessThanOrEqual(PROVISION_GRACE_MS)
+    const r = await runTick(world.db, { createMeeting: okCreate }, justAfter)
+    expect(r.provisioned).toBe(1)
+    expect(s.joinUrl).toBe('https://meet.google.com/abc')
+  })
+
   it('marks past sessions done', async () => {
     await runTick(world.db, { createMeeting: okCreate }, now)
     const later = new Date('2026-06-15T13:00:00Z')

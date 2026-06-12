@@ -69,11 +69,14 @@ export default async function MemberHome({ params, searchParams }: {
     now: new Date(),
   })
 
+  // Render in the teacher's timezone and append the zone abbreviation (e.g.
+  // "PST") so students in other zones aren't misled by an unlabeled time.
   const fmt = (iso: string) => new Date(iso).toLocaleString('en-US', {
     weekday: 'long',
     hour: 'numeric',
     minute: '2-digit',
     timeZone: teacher.timezone,
+    timeZoneName: 'short',
   })
 
   return (

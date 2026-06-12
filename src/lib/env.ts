@@ -6,7 +6,11 @@ const schema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   APP_URL: z.string().url(),
   CRON_SECRET: z.string().min(16),
-  TOKEN_ENC_KEY: z.string().min(40), // base64 of 32 bytes
+  // base64 of exactly 32 bytes (AES-256 key); fail at boot, not at runtime.
+  TOKEN_ENC_KEY: z.string().refine(
+    (s) => { try { return Buffer.from(s, 'base64').length === 32 } catch { return false } },
+    'TOKEN_ENC_KEY must be base64 of exactly 32 bytes',
+  ),
   STRIPE_SECRET_KEY: z.string().min(1),
   STRIPE_CONNECT_CLIENT_ID: z.string().min(1),
   STRIPE_WEBHOOK_SECRET: z.string().min(1),

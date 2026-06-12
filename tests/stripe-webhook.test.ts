@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { handleStripeEvent, type WebhookDb, type MembershipUpsert } from '@/lib/stripe-webhook'
+import {
+  handleStripeEvent, subscriptionToStatus, subscriptionPeriodEnd, subscriptionToMembership,
+  type WebhookDb, type MembershipUpsert,
+} from '@/lib/stripe-webhook'
 
-function makeDb() {
+function makeDb(
+  owners: Record<string, string | null> = { 'cls-1': 'acct_T1' },
+  storedSubs: Record<string, string | null> = {},
+) {
   const seen = new Set<string>()
   const upserts: MembershipUpsert[] = []
   const cleared: string[] = []
@@ -10,14 +16,20 @@ function makeDb() {
     async markProcessed(id) { seen.add(id) },
     async upsertMembership(m) { upserts.push(m) },
     async clearStripeAccount(accountId) { cleared.push(accountId) },
+    async classroomOwnerAccount(classroomId) { return owners[classroomId] ?? null },
+    async membershipSubscriptionId(classroomId, studentId) {
+      return storedSubs[`${classroomId}/${studentId}`] ?? null
+    },
   }
-  return { db, upserts, cleared }
+  return { db, upserts, cleared, seen }
 }
 
-const subEvent = (id: string, status: string, type = 'customer.subscription.updated') => ({
+const subEvent = (
+  id: string, status: string, type = 'customer.subscription.updated', subId = 'sub_1',
+) => ({
   id, type, account: 'acct_T1',
   data: { object: {
-    id: 'sub_1', customer: 'cus_1', status,
+    id: subId, customer: 'cus_1', status,
     items: { data: [{ current_period_end: 1781568000 }] }, // 2026-06-16T00:00:00Z
     metadata: { classroom_id: 'cls-1', student_id: 'stu-1' },
   } },
@@ -39,6 +51,41 @@ describe('handleStripeEvent', () => {
     await handleStripeEvent(subEvent('evt_2', 'canceled', 'customer.subscription.deleted'), ctx.db)
     expect(ctx.upserts[0].status).toBe('canceled')
   })
+  it('deleted event for the SAME stored sub still cancels (no superseding sub)', async () => {
+    // stored sub matches the event's sub → legitimate cancel, must write canceled.
+    const c = makeDb({ 'cls-1': 'acct_T1' }, { 'cls-1/stu-1': 'sub_1' })
+    await handleStripeEvent(
+      subEvent('evt_del_same', 'canceled', 'customer.subscription.deleted', 'sub_1'), c.db)
+    expect(c.upserts).toHaveLength(1)
+    expect(c.upserts[0].status).toBe('canceled')
+  })
+  it('out-of-order: deleted event for an OLD superseded sub does NOT clobber the active new membership', async () => {
+    // After cancel→re-subscribe the stored row points at sub_NEW (active). A late-retried
+    // deleted event for sub_OLD arrives — it must be skipped, not overwrite the row.
+    const c = makeDb({ 'cls-1': 'acct_T1' }, { 'cls-1/stu-1': 'sub_NEW' })
+    await handleStripeEvent(
+      subEvent('evt_del_old', 'canceled', 'customer.subscription.deleted', 'sub_OLD'), c.db)
+    expect(c.upserts).toHaveLength(0) // active membership untouched
+    expect(c.seen.has('evt_del_old')).toBe(true) // marked processed; Stripe stops retrying
+  })
+  it('deleted event with no stored membership yet still upserts canceled', async () => {
+    // No stored sub id → nothing to supersede → process normally.
+    const c = makeDb({ 'cls-1': 'acct_T1' }, {})
+    await handleStripeEvent(
+      subEvent('evt_del_none', 'canceled', 'customer.subscription.deleted', 'sub_1'), c.db)
+    expect(c.upserts).toHaveLength(1)
+    expect(c.upserts[0].status).toBe('canceled')
+  })
+  it('non-deleted updated event for a different sub still upserts (only deleted is order-guarded)', async () => {
+    // An `updated` event for a different sub id represents a real state change we should
+    // honor (e.g. the new sub going active); the guard targets stale deletes only.
+    const c = makeDb({ 'cls-1': 'acct_T1' }, { 'cls-1/stu-1': 'sub_OLD' })
+    await handleStripeEvent(
+      subEvent('evt_upd_new', 'active', 'customer.subscription.updated', 'sub_NEW'), c.db)
+    expect(c.upserts).toHaveLength(1)
+    expect(c.upserts[0].stripeSubscriptionId).toBe('sub_NEW')
+    expect(c.upserts[0].status).toBe('active')
+  })
   it('maps unknown stripe statuses conservatively', async () => {
     await handleStripeEvent(subEvent('evt_3', 'unpaid'), ctx.db)
     expect(ctx.upserts[0].status).toBe('canceled')
@@ -54,6 +101,30 @@ describe('handleStripeEvent', () => {
     const e = subEvent('evt_6', 'active'); e.data.object.metadata = {}
     await handleStripeEvent(e, ctx.db)
     expect(ctx.upserts).toHaveLength(0)
+  })
+  it('upserts when the event account owns the classroom in metadata', async () => {
+    // subEvent uses account 'acct_T1'; default owner of 'cls-1' is 'acct_T1'
+    await handleStripeEvent(subEvent('evt_own', 'active'), ctx.db)
+    expect(ctx.upserts).toHaveLength(1)
+    expect(ctx.upserts[0].classroomId).toBe('cls-1')
+  })
+  it('refuses to upsert when the event account does not own the classroom (cross-tenant attack)', async () => {
+    // Attacker sends a validly-signed sub event from their own connected account
+    // (acct_ATTACKER) with metadata pointing at a victim classroom owned by acct_T1.
+    const attacker = makeDb({ 'cls-1': 'acct_T1' })
+    const e = subEvent('evt_attack', 'active')
+    e.account = 'acct_ATTACKER'
+    await handleStripeEvent(e, attacker.db)
+    expect(attacker.upserts).toHaveLength(0)
+    // Marked processed so Stripe stops retrying the intentionally-ignored event.
+    expect(attacker.seen.has('evt_attack')).toBe(true)
+  })
+  it('refuses to upsert when the event has no account', async () => {
+    const e = subEvent('evt_noacct', 'active')
+    delete e.account
+    await handleStripeEvent(e, ctx.db)
+    expect(ctx.upserts).toHaveLength(0)
+    expect(ctx.seen.has('evt_noacct')).toBe(true)
   })
   it('clears the teacher stripe account on account.application.deauthorized', async () => {
     const e = { id: 'evt_da1', type: 'account.application.deauthorized', account: 'acct_T9', data: { object: { id: 'ca_app' } } } as any
@@ -81,6 +152,8 @@ describe('handleStripeEvent', () => {
       markProcessed: async (id) => { seen.add(id) },
       upsertMembership: async () => {},
       clearStripeAccount: async (a) => { calls++; if (calls === 1) throw new Error('db down'); cleared.push(a) },
+      classroomOwnerAccount: async () => null,
+      membershipSubscriptionId: async () => null,
     }
     const e = { id: 'evt_da4', type: 'account.application.deauthorized', account: 'acct_T9', data: { object: { id: 'ca_app' } } } as any
     await expect(handleStripeEvent(e, db)).rejects.toThrow('db down')
@@ -98,11 +171,56 @@ describe('handleStripeEvent', () => {
       markProcessed: async (id) => { seen.add(id) },
       upsertMembership: async (m) => { calls++; if (calls === 1) throw new Error('db down'); upserts.push(m) },
       clearStripeAccount: async () => {},
+      classroomOwnerAccount: async () => 'acct_T1',
+      membershipSubscriptionId: async () => null,
     }
     await expect(handleStripeEvent(subEvent('evt_r', 'active'), db)).rejects.toThrow('db down')
     await handleStripeEvent(subEvent('evt_r', 'active'), db) // Stripe retry
     expect(upserts).toHaveLength(1)
     await handleStripeEvent(subEvent('evt_r', 'active'), db) // duplicate delivery
     expect(upserts).toHaveLength(1)
+  })
+})
+
+describe('shared subscription→membership projection', () => {
+  const mkSub = (status: string, extra: Record<string, unknown> = {}): any => ({
+    id: 'sub_x', customer: 'cus_x', status,
+    metadata: { student_id: 'stu-1', classroom_id: 'cls-1' }, ...extra,
+  })
+
+  it('subscriptionToStatus maps active/trialing/past_due verbatim, everything else to canceled', () => {
+    expect(subscriptionToStatus('active')).toBe('active')
+    expect(subscriptionToStatus('trialing')).toBe('trialing')
+    expect(subscriptionToStatus('past_due')).toBe('past_due')
+    for (const s of ['canceled', 'unpaid', 'incomplete', 'incomplete_expired', 'paused']) {
+      expect(subscriptionToStatus(s)).toBe('canceled')
+    }
+  })
+
+  it('subscriptionPeriodEnd reads the subscription root, falling back to items.data[0]', () => {
+    expect(subscriptionPeriodEnd(mkSub('active', { current_period_end: 111 }))).toBe(111)
+    expect(subscriptionPeriodEnd(mkSub('active', { items: { data: [{ current_period_end: 222 }] } }))).toBe(222)
+    expect(subscriptionPeriodEnd(mkSub('active'))).toBeUndefined()
+  })
+
+  it('subscriptionToMembership forces canceled when deleted, regardless of reported status', () => {
+    const active = subscriptionToMembership(mkSub('active', { current_period_end: 1781568000 }))
+    expect(active.status).toBe('active')
+    expect(active.stripeCustomerId).toBe('cus_x')
+    expect(active.currentPeriodEnd).toEqual(new Date('2026-06-16T00:00:00.000Z'))
+
+    const deleted = subscriptionToMembership(mkSub('active'), { deleted: true })
+    expect(deleted.status).toBe('canceled')
+  })
+
+  it('parity: the projection drives the same output the webhook upsert writes', async () => {
+    // The handler path and the direct projection must agree for the same subscription.
+    const { db, upserts } = makeDb()
+    await handleStripeEvent(subEvent('evt_parity', 'active'), db)
+    const direct = subscriptionToMembership(
+      subEvent('evt_parity', 'active').data.object as any)
+    expect(upserts[0].status).toBe(direct.status)
+    expect(upserts[0].currentPeriodEnd).toEqual(direct.currentPeriodEnd)
+    expect(upserts[0].stripeCustomerId).toBe(direct.stripeCustomerId)
   })
 })

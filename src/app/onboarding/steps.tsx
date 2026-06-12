@@ -166,13 +166,26 @@ export function ProviderStep({
   )
 }
 
+const MISSING_LABELS: Record<string, string> = {
+  title: 'add a title',
+  price: 'set a price',
+  stripe: 'connect Stripe',
+  meeting_provider: 'connect your meeting provider',
+  schedule: 'add a class schedule',
+}
+
 export function ScheduleStep({
   classroom,
   scheduleCount,
+  error,
+  need,
 }: {
   classroom: any
   scheduleCount: number
+  error?: string
+  need?: string
 }) {
+  const missing = error === 'missing' ? (need ?? '').split(',').filter(Boolean) : []
   async function save(formData: FormData) {
     'use server'
     if (!classroom) redirect('/onboarding?step=classroom')
@@ -184,13 +197,14 @@ export function ScheduleStep({
       slug: classroom.slug,
       description: classroom.description,
       provider: classroom.provider,
-      currency: 'usd',
-      trialDays: 7,
       priceAmount: Math.round(priceRaw * 100),
     })
     if ('error' in u && u.error) redirect('/onboarding?step=schedule&error=1')
-    if (formData.get('localTime')) {
-      await createSchedule({
+    // Only create a schedule when the classroom doesn't already have one.
+    // createSchedule inserts a fresh weekly row every call (no dedupe), so a
+    // retry of "Save & publish" would otherwise spawn duplicate sessions.
+    if (scheduleCount === 0 && formData.get('localTime')) {
+      const s = await createSchedule({
         kind: 'weekly',
         classroomId: classroom.id,
         weekday: Number(formData.get('weekday')),
@@ -198,9 +212,16 @@ export function ScheduleStep({
         durationMinutes: Number(formData.get('duration')),
         until: null,
       })
+      if (s && 'error' in s && s.error) redirect('/onboarding?step=schedule&error=1')
     }
     const r = await publishClassroom(classroom.id)
-    if ('error' in r && r.error) redirect('/onboarding?step=schedule&error=1')
+    if ('error' in r && r.error) {
+      // Surface the specific unmet prerequisites instead of a generic banner.
+      if ('missing' in r && Array.isArray(r.missing) && r.missing.length) {
+        redirect(`/onboarding?step=schedule&error=missing&need=${r.missing.join(',')}`)
+      }
+      redirect('/onboarding?step=schedule&error=1')
+    }
     await setOnboardingStep('done')
     redirect('/onboarding?step=done')
   }
@@ -208,6 +229,12 @@ export function ScheduleStep({
   return (
     <form action={save} className="space-y-4">
       <h1 className="text-2xl font-bold">Schedule your first class</h1>
+      {missing.length > 0 && (
+        <div className="rounded bg-red-50 p-3 text-sm text-red-800">
+          Can&apos;t publish yet &mdash; please{' '}
+          {missing.map((m) => MISSING_LABELS[m] ?? m).join(', ')}.
+        </div>
+      )}
       <div className="flex gap-2 items-center text-sm">
         Weekly on
         <select name="weekday" defaultValue={1} className="rounded border px-2 py-1">

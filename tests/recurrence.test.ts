@@ -15,6 +15,38 @@ describe('one-off', () => {
   })
 })
 
+describe('ad-hoc / synchronous materialization', () => {
+  // Mirrors createSchedule's synchronous materialization: an occurrence starting
+  // within one cron period (10 min) from `now` must be materialized at creation
+  // time, and re-materializing the same rule must not produce duplicate rows.
+  it('materializes a one_off starting ~5 min from now', () => {
+    const now = new Date('2026-06-15T10:30:00Z')
+    const startsAt = new Date(now.getTime() + 5 * 60_000).toISOString()
+    const occ = materializeOccurrences({ kind: 'one_off', startsAt, durationMinutes: 30 }, now, 30)
+    expect(occ.map(o => o.startsAt.toISOString())).toEqual([new Date(startsAt).toISOString()])
+  })
+
+  it('is idempotent under an ignore-dupes (schedule_id,starts_at) insert', () => {
+    const now = new Date('2026-06-15T10:30:00Z')
+    const rule: ScheduleRule = { kind: 'one_off', startsAt: new Date(now.getTime() + 5 * 60_000).toISOString(), durationMinutes: 30 }
+    // Simulate the unique (schedule_id, starts_at) constraint with a key set.
+    const rows = new Set<string>()
+    const insertIgnoreDupes = (occ: ReturnType<typeof materializeOccurrences>) => {
+      let inserted = 0
+      for (const o of occ) {
+        const key = `sch-1|${o.startsAt.toISOString()}`
+        if (!rows.has(key)) { rows.add(key); inserted++ }
+      }
+      return inserted
+    }
+    // Synchronous create materializes once...
+    expect(insertIgnoreDupes(materializeOccurrences(rule, now, 30))).toBe(1)
+    // ...a later cron tick re-materializing the same rule inserts nothing.
+    expect(insertIgnoreDupes(materializeOccurrences(rule, new Date(now.getTime() + 60_000), 30))).toBe(0)
+    expect(rows.size).toBe(1)
+  })
+})
+
 describe('weekly', () => {
   it('yields every Monday 7:00am ET in the window', () => {
     const occ = materializeOccurrences(weekly(), new Date('2026-06-10T00:00:00Z'), 14)

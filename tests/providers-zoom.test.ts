@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { zoomProvider, exchangeZoomCode, refreshZoom } from '@/lib/providers/zoom'
+import { InvalidGrantError } from '@/lib/providers/tokens'
 
 // zoom.ts calls env() only for the Basic-auth header on token requests.
 vi.mock('@/lib/env', () => ({
@@ -95,5 +96,25 @@ describe('zoom token requests', () => {
   it('throws on a non-ok token response', async () => {
     stubFetch(401, { error: 'invalid_client' })
     await expect(exchangeZoomCode('x')).rejects.toThrow(/zoom token: 401/)
+  })
+
+  it('throws InvalidGrantError when the provider rejects the refresh token', async () => {
+    stubFetch(400, { error: 'invalid_grant', reason: 'Invalid Token!' })
+    await expect(refreshZoom('dead')).rejects.toThrow(InvalidGrantError)
+  })
+
+  it('rejects a malformed token response (missing expires_in)', async () => {
+    stubFetch(200, { access_token: 'AT', refresh_token: 'RT' })
+    await expect(exchangeZoomCode('x')).rejects.toThrow(/malformed response/)
+  })
+
+  it('rejects a malformed token response (undefined access_token)', async () => {
+    stubFetch(200, { refresh_token: 'RT', expires_in: 3600 })
+    await expect(exchangeZoomCode('x')).rejects.toThrow(/malformed response/)
+  })
+
+  it('rejects a malformed create response (missing join_url)', async () => {
+    stubFetch(201, { id: 123 })
+    await expect(zoomProvider.createMeeting(args)).rejects.toThrow(/malformed response/)
   })
 })

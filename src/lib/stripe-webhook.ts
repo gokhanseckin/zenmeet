@@ -15,23 +15,56 @@ export interface WebhookDb {
   upsertMembership(m: MembershipUpsert): Promise<void>
   /** Clear stripe_account_id on any teacher holding this connected account id. */
   clearStripeAccount(accountId: string): Promise<void>
+  /** The connected stripe_account_id of the teacher who owns this classroom, or null. */
+  classroomOwnerAccount(classroomId: string): Promise<string | null>
+  /** The stripe_subscription_id currently stored for (student, classroom), or null if no row. */
+  membershipSubscriptionId(classroomId: string, studentId: string): Promise<string | null>
 }
 
-function mapStatus(s: string): MembershipUpsert['status'] {
+// Minimal local type for subscription item with current_period_end,
+// since Stripe SDK v22 moved current_period_end to the subscription root but
+// the plan's test fixture sets it on the item. We accept either location.
+type SubItem = { current_period_end?: number }
+type SubWithItems = Stripe.Subscription & { items?: { data: SubItem[] } }
+type MembershipStatus = MembershipUpsert['status']
+
+/** Map a Stripe subscription status string to our membership status. */
+export function subscriptionToStatus(s: string): MembershipStatus {
   if (s === 'trialing') return 'trialing'
   if (s === 'active') return 'active'
   if (s === 'past_due') return 'past_due'
   return 'canceled' // canceled, unpaid, incomplete, incomplete_expired, paused → no access — paused ≠ canceled in Stripe, but no pay = no access is intentional here
 }
 
+/**
+ * current_period_end as a unix timestamp (seconds), or undefined.
+ * Stripe SDK v22 moved current_period_end to the subscription root; older
+ * fixtures set it on items.data[0]. We accept either location.
+ */
+export function subscriptionPeriodEnd(sub: Stripe.Subscription): number | undefined {
+  const s = sub as SubWithItems & { current_period_end?: number }
+  return s.current_period_end ?? s.items?.data?.[0]?.current_period_end
+}
+
+/**
+ * Shared subscription→membership projection used by both the webhook handler
+ * and the on-read reconciler, so status/period-end mapping can't drift.
+ * `deleted` forces canceled regardless of the subscription's reported status.
+ */
+export function subscriptionToMembership(
+  sub: Stripe.Subscription, opts: { deleted?: boolean } = {},
+): { status: MembershipStatus; currentPeriodEnd: Date | null; stripeCustomerId: string } {
+  const periodEnd = subscriptionPeriodEnd(sub)
+  return {
+    status: opts.deleted ? 'canceled' : subscriptionToStatus(sub.status),
+    currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : null,
+    stripeCustomerId: typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
+  }
+}
+
 const SUB_EVENTS = new Set([
   'customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted',
 ])
-
-// Minimal local type for subscription item with current_period_end,
-// since Stripe SDK v22 moved current_period_end to the subscription root but
-// the plan's test fixture sets it on the item. We accept either location.
-type SubItem = { current_period_end?: number }
 
 export async function handleStripeEvent(event: Stripe.Event, db: WebhookDb): Promise<void> {
   // Teacher revoked our Connect access. Clear their stripe_account_id so checkout/
@@ -47,21 +80,44 @@ export async function handleStripeEvent(event: Stripe.Event, db: WebhookDb): Pro
     return
   }
   if (!SUB_EVENTS.has(event.type)) return
-  const sub = event.data.object as Stripe.Subscription & { items?: { data: SubItem[] } }
+  const sub = event.data.object as SubWithItems
   const { classroom_id, student_id } = (sub.metadata ?? {}) as Record<string, string>
   if (!classroom_id || !student_id) return
   if (await db.wasProcessed(event.id)) return
-  const periodEnd: number | undefined =
-    (sub as unknown as { current_period_end?: number }).current_period_end ??
-    sub.items?.data?.[0]?.current_period_end
-  // No timestamp ordering guard: out-of-order deliveries can overwrite (rare; revisit with event.created if it bites)
+  // Cross-tenant guard: the connected account that sent this event MUST own the
+  // classroom named in the (attacker-controllable) metadata. Otherwise any teacher
+  // could mint active memberships in another teacher's classroom by setting metadata
+  // on a subscription in their own Connect account. This is a validly-signed event we
+  // intentionally ignore, so mark it processed to stop Stripe from retrying.
+  const ownerAccount = await db.classroomOwnerAccount(classroom_id)
+  if (!event.account || event.account !== ownerAccount) {
+    await db.markProcessed(event.id)
+    return
+  }
+
+  // Out-of-order delivery guard (P2 #8): after a cancel→re-subscribe there are two
+  // subscriptions for one (student, classroom). A late-retried `subscription.deleted`
+  // for the OLD sub can arrive AFTER the NEW sub's active upsert. If we processed it
+  // blindly we'd clobber the active row back to canceled with the stale sub id and lock
+  // out a paying student. So: if the deleted event names a different subscription than
+  // the one currently stored, it's for a superseded sub — skip the upsert. The event is
+  // still valid (we marked it processed), just no longer authoritative for this row.
+  if (event.type === 'customer.subscription.deleted') {
+    const storedSubId = await db.membershipSubscriptionId(classroom_id, student_id)
+    if (storedSubId && storedSubId !== sub.id) {
+      await db.markProcessed(event.id)
+      return
+    }
+  }
+
+  const projection = subscriptionToMembership(sub, {
+    deleted: event.type === 'customer.subscription.deleted',
+  })
   await db.upsertMembership({
     classroomId: classroom_id,
     studentId: student_id,
-    stripeCustomerId: typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
     stripeSubscriptionId: sub.id,
-    status: event.type === 'customer.subscription.deleted' ? 'canceled' : mapStatus(sub.status),
-    currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : null,
+    ...projection,
   })
   await db.markProcessed(event.id)
 }

@@ -18,7 +18,7 @@ const upsertSchema = z.object({
   trialDays: z.coerce.number().int().min(0).max(90).default(7),
 })
 
-export async function upsertClassroom(input: z.infer<typeof upsertSchema>) {
+export async function upsertClassroom(input: z.input<typeof upsertSchema>) {
   const user = await requireUser('/onboarding')
   await ensureTeacher(user.id)
   const parsed = upsertSchema.safeParse(input)
@@ -31,9 +31,18 @@ export async function upsertClassroom(input: z.infer<typeof upsertSchema>) {
   const db = supabaseAdmin()
   const row: Record<string, unknown> = {
     teacher_id: user.id, title: data.title, slug, description: data.description,
-    provider: data.provider, price_amount: data.priceAmount ?? null,
-    currency: data.currency, trial_days: data.trialDays,
+    provider: data.provider,
   }
+  // Pricing fields are only persisted when the CALLER actually supplied them.
+  // ClassroomStep submits title/slug/description without pricing, so applying
+  // zod defaults (currency 'usd', trial_days 7) or `priceAmount ?? null` into an
+  // UPDATE would clobber a draft's saved price or violate the
+  // `published_requires_pricing` check constraint on a published classroom.
+  // New inserts get sensible defaults; existing-row updates only touch what was sent.
+  if (input.priceAmount !== undefined) row.price_amount = data.priceAmount ?? null
+  else if (!data.id) row.price_amount = null
+  if (input.currency !== undefined || !data.id) row.currency = data.currency
+  if (input.trialDays !== undefined || !data.id) row.trial_days = data.trialDays
 
   let deactivateOldPrice: (() => Promise<unknown>) | null = null
   if (data.id) {
