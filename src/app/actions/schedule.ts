@@ -9,6 +9,7 @@ import { zoomProvider, refreshZoom } from '@/lib/providers/zoom'
 import { googleProvider, refreshGoogle } from '@/lib/providers/google'
 import { materializeOccurrences, type ScheduleRule } from '@/lib/recurrence'
 import { MATERIALIZE_DAYS } from '@/lib/cron/tick'
+import { isAllowedJoinUrl } from '@/app/api/join/[sessionId]/route'
 
 const scheduleSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('one_off'), classroomId: z.string().uuid(),
@@ -145,8 +146,16 @@ export async function stopSchedule(scheduleId: string) {
 /** Manual escape hatch when auto-provisioning fails. */
 export async function setSessionLink(sessionId: string, joinUrl: string) {
   const user = await requireUser('/dashboard')
-  const parsed = z.string().url().safeParse(joinUrl)
-  if (!parsed.success) return { error: 'Enter a valid URL' }
+  // Restrict to known meeting hosts (zoom.us + subdomains, meet.google.com).
+  // An unrestricted URL here is an authenticated open redirect: the join route
+  // redirects students straight to session.join_url. Shares the allowlist with
+  // that route so both ends agree on what's trustworthy.
+  const parsed = z
+    .string()
+    .url()
+    .refine(isAllowedJoinUrl, 'Enter a Zoom or Google Meet link')
+    .safeParse(joinUrl)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Enter a valid URL' }
   const db = supabaseAdmin()
   const { data: session } = await db.from('sessions').select('id, classrooms!inner(teacher_id)').eq('id', sessionId).single()
   if (!session || (session as any).classrooms.teacher_id !== user.id) return { error: 'Not found' }
