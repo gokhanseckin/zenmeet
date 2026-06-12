@@ -36,5 +36,19 @@ Worked the launch follow-ups. Status:
 - **`past_due` grants join access** (it's in `ACTIVE_STATUSES`) — confirmed **intentional** (grace period during dunning). Leave as-is.
 - **Stray worktree** `.claude/worktrees/nice-sanderson-93c0c7` (branch `claude/nice-sanderson-93c0c7`, "Zenmeet-designs") pollutes bare `eslint` with ~33 errors from generated/old JSX. Real `src`/`tests` lint clean (0 errors). Remove the worktree or add `.claude/**` to eslint ignores.
 
+## Update — 2026-06-12 (session 3)
+Worked launch follow-ups 1–5. Status:
+- **#1 Purge prod test data:** ✅ Done. Deleted 2 memberships, 2 students (incl. the pollution row `0d4bcbed` that reused the teacher's auth id as a student), and all 9 `stripe_events`. **Kept** the `esneklik` classroom + 7 sessions + schedule and the teacher row `0d4bcbed` (your real login) — chose "keep teacher as-is" because the kept classroom references that connected account's Stripe product/price. Also deleted the Stripe TEST objects on `acct_1ThAH0RbCOfXwdpG`: test clock `clock_1ThEaG…` (zmtest-dunning, took `cus_Ugbnh2…` + `sub_1ThEaK…`), `cus_Ugbs9oD0NE22E6` (+`sub_1ThEfn…`), `cus_UgXocAo5gpXxS0` (+`sub_1ThAin…`). All `deleted:true`.
+- **#3 Worktree/eslint cleanup:** ✅ Worktree `nice-sanderson-93c0c7` is **active** docs-site work (5 commits, unmerged) — NOT abandoned, so kept it. Instead added `.claude/**` to eslint ignores → bare `eslint .` now 0 errors (was 55). On [PR #4](https://github.com/gokhanseckin/zenmeet/pull/4).
+- **#2 `account.application.deauthorized` handler:** ✅ Done (TDD). Clears `teachers.stripe_account_id` for the deauthorized account (forces reconnect via existing gate); leaves student memberships intact by design (deauth often accidental/temporary). Idempotent + retryable. 4 new tests. On [PR #4](https://github.com/gokhanseckin/zenmeet/pull/4).
+- **#4 Google verification:** ⏸️ Explained only (your call). Scope `calendar.events` is **sensitive** (lighter tier — no CASA assessment). Needs domain verification, branding, privacy-policy URL, per-scope justification, a demo video, then a multi-week Google review. 100-user cap + "unverified app" screen until approved. Recommended: launch under the cap and start verification in parallel (review wait is the long pole).
+- **#5 Zoom:** ✅ Scoped + code/tests landed (dev/unpublished). Zoom is already fully implemented in code; this session added the [Marketplace runbook](zoom-marketplace-runbook.md), `.env.example` docs, and **8 regression tests** (`tests/providers-zoom.test.ts`: createMeeting/deleteMeeting + OAuth exchange/refresh). Plan: [plans/2026-06-11-zoom-classrooms.md](plans/2026-06-11-zoom-classrooms.md). Provider stays **immutable after classroom creation** (confirmed product decision — no edit UI).
+
+### Still open after session 3
+- **Zoom Task 1 (manual):** create the Zoom Marketplace **General App** (user-managed OAuth), fill `ZOOM_CLIENT_ID`/`SECRET` in `.env.local` + Vercel prod. Works for owner + added test users while unpublished.
+- **Zoom Marketplace publish/review** — deferred; required before *arbitrary* teachers can connect Zoom (analogous to Google verification).
+- **#4 Google verification submission** — not started (your call).
+- **Stripe go-live** — still deferred to a later session (swap test→live keys, resolve FR/EUR-platform vs hardcoded-USD currency issue).
+
 ## Security reminder
 A Supabase **Personal Access Token** (`sbp_…`) was used this session for auth-config + webhook setup. If you haven't already, **revoke it**: https://supabase.com/dashboard/account/tokens — auth config is now set and the app uses only the project keys at runtime. All other secrets live in `.env.local` (gitignored) and Vercel Production env.
