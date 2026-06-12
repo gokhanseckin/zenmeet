@@ -6,7 +6,9 @@ import { getUser } from '@/lib/auth'
 export async function GET(req: NextRequest) {
   const user = await getUser()
   if (!user) return NextResponse.redirect(new URL('/auth/sign-in?next=/onboarding', req.url))
-  const state = randomBytes(16).toString('hex')
+  // Bind the state nonce to the authenticated user so a stolen/forged state
+  // from another session can't link a provider account to this teacher row.
+  const state = `${randomBytes(16).toString('hex')}.${user.id}`
   const url = new URL('https://connect.stripe.com/oauth/authorize')
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('client_id', env().STRIPE_CONNECT_CLIENT_ID)
