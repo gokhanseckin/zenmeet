@@ -30,6 +30,14 @@ function supabaseWebhookDb(): WebhookDb {
         .eq('stripe_account_id', accountId)
       if (error) throw new Error(error.message)
     },
+    async classroomOwnerAccount(classroomId) {
+      const { data, error } = await db.from('classrooms')
+        .select('teachers!inner(stripe_account_id)')
+        .eq('id', classroomId)
+        .maybeSingle()
+      if (error) throw new Error(error.message)
+      return (data as any)?.teachers?.stripe_account_id ?? null
+    },
   }
 }
 

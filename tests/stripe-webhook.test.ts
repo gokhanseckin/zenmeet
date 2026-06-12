@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { handleStripeEvent, type WebhookDb, type MembershipUpsert } from '@/lib/stripe-webhook'
 
-function makeDb() {
+function makeDb(owners: Record<string, string | null> = { 'cls-1': 'acct_T1' }) {
   const seen = new Set<string>()
   const upserts: MembershipUpsert[] = []
   const cleared: string[] = []
@@ -10,8 +10,9 @@ function makeDb() {
     async markProcessed(id) { seen.add(id) },
     async upsertMembership(m) { upserts.push(m) },
     async clearStripeAccount(accountId) { cleared.push(accountId) },
+    async classroomOwnerAccount(classroomId) { return owners[classroomId] ?? null },
   }
-  return { db, upserts, cleared }
+  return { db, upserts, cleared, seen }
 }
 
 const subEvent = (id: string, status: string, type = 'customer.subscription.updated') => ({
@@ -55,6 +56,30 @@ describe('handleStripeEvent', () => {
     await handleStripeEvent(e, ctx.db)
     expect(ctx.upserts).toHaveLength(0)
   })
+  it('upserts when the event account owns the classroom in metadata', async () => {
+    // subEvent uses account 'acct_T1'; default owner of 'cls-1' is 'acct_T1'
+    await handleStripeEvent(subEvent('evt_own', 'active'), ctx.db)
+    expect(ctx.upserts).toHaveLength(1)
+    expect(ctx.upserts[0].classroomId).toBe('cls-1')
+  })
+  it('refuses to upsert when the event account does not own the classroom (cross-tenant attack)', async () => {
+    // Attacker sends a validly-signed sub event from their own connected account
+    // (acct_ATTACKER) with metadata pointing at a victim classroom owned by acct_T1.
+    const attacker = makeDb({ 'cls-1': 'acct_T1' })
+    const e = subEvent('evt_attack', 'active')
+    e.account = 'acct_ATTACKER'
+    await handleStripeEvent(e, attacker.db)
+    expect(attacker.upserts).toHaveLength(0)
+    // Marked processed so Stripe stops retrying the intentionally-ignored event.
+    expect(attacker.seen.has('evt_attack')).toBe(true)
+  })
+  it('refuses to upsert when the event has no account', async () => {
+    const e = subEvent('evt_noacct', 'active')
+    delete e.account
+    await handleStripeEvent(e, ctx.db)
+    expect(ctx.upserts).toHaveLength(0)
+    expect(ctx.seen.has('evt_noacct')).toBe(true)
+  })
   it('clears the teacher stripe account on account.application.deauthorized', async () => {
     const e = { id: 'evt_da1', type: 'account.application.deauthorized', account: 'acct_T9', data: { object: { id: 'ca_app' } } } as any
     await handleStripeEvent(e, ctx.db)
@@ -81,6 +106,7 @@ describe('handleStripeEvent', () => {
       markProcessed: async (id) => { seen.add(id) },
       upsertMembership: async () => {},
       clearStripeAccount: async (a) => { calls++; if (calls === 1) throw new Error('db down'); cleared.push(a) },
+      classroomOwnerAccount: async () => null,
     }
     const e = { id: 'evt_da4', type: 'account.application.deauthorized', account: 'acct_T9', data: { object: { id: 'ca_app' } } } as any
     await expect(handleStripeEvent(e, db)).rejects.toThrow('db down')
@@ -98,6 +124,7 @@ describe('handleStripeEvent', () => {
       markProcessed: async (id) => { seen.add(id) },
       upsertMembership: async (m) => { calls++; if (calls === 1) throw new Error('db down'); upserts.push(m) },
       clearStripeAccount: async () => {},
+      classroomOwnerAccount: async () => 'acct_T1',
     }
     await expect(handleStripeEvent(subEvent('evt_r', 'active'), db)).rejects.toThrow('db down')
     await handleStripeEvent(subEvent('evt_r', 'active'), db) // Stripe retry

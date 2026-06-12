@@ -15,6 +15,8 @@ export interface WebhookDb {
   upsertMembership(m: MembershipUpsert): Promise<void>
   /** Clear stripe_account_id on any teacher holding this connected account id. */
   clearStripeAccount(accountId: string): Promise<void>
+  /** The connected stripe_account_id of the teacher who owns this classroom, or null. */
+  classroomOwnerAccount(classroomId: string): Promise<string | null>
 }
 
 function mapStatus(s: string): MembershipUpsert['status'] {
@@ -51,6 +53,16 @@ export async function handleStripeEvent(event: Stripe.Event, db: WebhookDb): Pro
   const { classroom_id, student_id } = (sub.metadata ?? {}) as Record<string, string>
   if (!classroom_id || !student_id) return
   if (await db.wasProcessed(event.id)) return
+  // Cross-tenant guard: the connected account that sent this event MUST own the
+  // classroom named in the (attacker-controllable) metadata. Otherwise any teacher
+  // could mint active memberships in another teacher's classroom by setting metadata
+  // on a subscription in their own Connect account. This is a validly-signed event we
+  // intentionally ignore, so mark it processed to stop Stripe from retrying.
+  const ownerAccount = await db.classroomOwnerAccount(classroom_id)
+  if (!event.account || event.account !== ownerAccount) {
+    await db.markProcessed(event.id)
+    return
+  }
   const periodEnd: number | undefined =
     (sub as unknown as { current_period_end?: number }).current_period_end ??
     sub.items?.data?.[0]?.current_period_end
