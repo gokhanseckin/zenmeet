@@ -21,6 +21,11 @@ export async function POST(req: NextRequest) {
     .select('*, teachers!inner(stripe_account_id)')
     .eq('slug', slug).eq('status', 'published').single()
   if (!classroom?.stripe_price_id) return NextResponse.json({ error: 'Class not available' }, { status: 404 })
+  // Teacher may have deauthorized our Stripe Connect access (account.application.deauthorized
+  // clears stripe_account_id) while the classroom stays published. Without a connected account
+  // we cannot create a Checkout session — return a graceful "unavailable" instead of 500ing on onAccount(null).
+  const stripeAccountId = (classroom as any).teachers?.stripe_account_id as string | null
+  if (!stripeAccountId) return NextResponse.json({ error: 'Class not available' }, { status: 404 })
 
   // Already an active member? Send to member home instead of double-subscribing.
   const { data: existing } = await db.from('memberships').select('status')
@@ -38,7 +43,7 @@ export async function POST(req: NextRequest) {
     customer_email: user.email ?? undefined,
     success_url: `${env().APP_URL}/my/${slug}?cs={CHECKOUT_SESSION_ID}`,
     cancel_url: `${env().APP_URL}/${slug}`,
-  }, onAccount((classroom as any).teachers.stripe_account_id))
+  }, onAccount(stripeAccountId))
 
   return NextResponse.json({ redirect: session.url })
 }
