@@ -1,0 +1,75 @@
+---
+title: Connect Stripe to get paid
+description: Connect your Stripe account so members can subscribe and pay you.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+ZenMeet uses Stripe to handle your members' subscriptions. Connect your Stripe
+account once, and every payment goes straight to your bank — ZenMeet never holds
+your money.
+
+:::note
+You don't need an existing Stripe account — you can create one during the
+connection flow in about five minutes.
+:::
+
+## Before you start
+
+- Your classroom page is set up and has a custom URL.
+- You have your legal name, address, and bank details handy.
+- You're in a country Stripe supports.
+
+## Connect your account
+
+<Steps>
+
+1. **Open your payment settings** — from your teacher dashboard, go to
+   Settings → Payments.
+
+2. **Start the connection** — click **Connect with Stripe** to begin Stripe's
+   secure onboarding.
+
+3. **Complete Stripe's onboarding** — Stripe asks for your business details and
+   payout bank account. Most teachers choose **Individual**.
+
+4. **Return to ZenMeet** — your payment settings show **Stripe connected** and
+   your **Join** button goes live.
+
+</Steps>
+
+## Set your monthly price
+
+Set what members pay in Settings → Payments → Membership price. The price
+appears on your public classroom page's **Join** button.
+
+:::tip
+Every membership starts with a 7-day free trial by default. Members aren't
+charged until the trial ends, and they can cancel anytime.
+:::
+
+## How payouts work
+
+| What | Details |
+| --- | --- |
+| First payout | Around 7 days after your first successful payment. |
+| After that | Automatic, on a rolling daily schedule. |
+| Fees | Stripe's processing fee is deducted from each payment. |
+
+## Troubleshooting
+
+<details>
+<summary>Stripe says my account needs more information</summary>
+
+Open Settings → Payments → Manage on Stripe and complete the requested steps —
+payouts pause until you do.
+
+</details>
+
+<details>
+<summary>I connected the wrong Stripe account</summary>
+
+Go to Settings → Payments and choose **Disconnect**, then connect again with the
+right account.
+
+</details>

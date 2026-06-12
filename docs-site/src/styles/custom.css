@@ -1,0 +1,51 @@
+/* ZenMeet docs theme — maps the mockup palette onto Starlight's CSS variables.
+   Light is the canonical look; dark is a tuned complement. */
+
+:root {
+  /* Fonts (mockup: system sans + mono) */
+  --sl-font: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  --sl-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ---------- Light theme (canonical) ---------- */
+:root[data-theme='light'] {
+  /* Accent — terracotta #b1492f */
+  --sl-color-accent-low: #f3e0da;
+  --sl-color-accent: #b1492f;
+  --sl-color-accent-high: #7c3220;
+
+  /* Text / ink scale */
+  --sl-color-white: #2b2a27;      /* highest-contrast "white" slot = darkest ink in light mode */
+  --sl-color-gray-1: #3a3833;
+  --sl-color-gray-2: #6f6c64;
+  --sl-color-gray-3: #a39e94;
+  --sl-color-gray-4: #cbc7bd;
+  --sl-color-gray-5: #e3dfd5;
+  --sl-color-gray-6: #f1ede4;
+  --sl-color-black: #faf8f3;       /* "black" slot = paper background in light mode */
+
+  /* Surfaces */
+  --sl-color-bg: #faf8f3;          /* paper */
+  --sl-color-bg-nav: #faf8f3;
+  --sl-color-bg-sidebar: #faf8f3;
+  --sl-color-hairline: #e3dfd5;
+  --sl-color-hairline-light: #f1ede4;
+  --sl-color-text-accent: #b1492f;
+}
+
+/* ---------- Dark theme (tuned complement) ---------- */
+:root[data-theme='dark'] {
+  --sl-color-accent-low: #4a1d13;
+  --sl-color-accent: #d4684c;
+  --sl-color-accent-high: #f3d9d0;
+  --sl-color-text-accent: #e08a72;
+}
+
+/* ---------- Small touches to match the mockup ---------- */
+/* terracotta inline-code accent on a warm panel */
+:root[data-theme='light'] .sl-markdown-content code {
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-gray-5);
+}
+
+/* "Docs" pill spacing handled in SiteTitle override; header button styled there too. */

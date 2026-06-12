@@ -1,0 +1,19 @@
+---
+import { Image } from 'astro:assets';
+import mark from '../assets/zenmeet-mark.png';
+---
+<a href="/" class="zm-brand">
+  <Image src={mark} alt="ZenMeet" height={30} width={30} />
+  <span class="zm-wordmark"><b>zen</b>meet</span>
+  <span class="zm-docs-tag">Docs</span>
+</a>
+
+<style>
+  .zm-brand { display: flex; align-items: center; gap: 10px; color: var(--sl-color-white); font-weight: 700; font-size: 18px; letter-spacing: -0.01em; text-decoration: none; }
+  .zm-wordmark b { color: var(--sl-color-accent); }
+  .zm-docs-tag {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--sl-color-gray-2); border: 1px solid var(--sl-color-gray-4);
+    border-radius: 20px; padding: 3px 9px; background: var(--sl-color-bg);
+  }
+</style>
