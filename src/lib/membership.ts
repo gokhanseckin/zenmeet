@@ -2,6 +2,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { stripe, onAccount } from '@/lib/stripe'
 import { subscriptionToMembership } from '@/lib/stripe-webhook'
+import { hasMembershipAccess } from '@/lib/unlock'
 
 /**
  * Injected dependencies. Defaults are the real Stripe + Supabase clients;
@@ -15,6 +16,7 @@ export type MembershipDeps = {
 }
 
 const defaultDeps: MembershipDeps = { db: supabaseAdmin, stripe, onAccount }
+const ACTIVE_RECONCILE_STATUSES = new Set(['active', 'trialing', 'past_due'])
 
 /**
  * Returns the membership for (student, classroom), reconciling with Stripe when:
@@ -28,10 +30,15 @@ export async function getFreshMembership(args: {
   const { data: existing } = await db.from('memberships').select('*')
     .eq('student_id', args.studentId).eq('classroom_id', args.classroomId).maybeSingle()
 
-  const stale = existing && ['active', 'trialing'].includes(existing.status)
-    && existing.current_period_end && new Date(existing.current_period_end) < new Date()
-  const needsReconcile = ((!existing || existing.status === 'canceled' || stale) && !!args.checkoutSessionId)
-    || !!stale
+  const now = new Date()
+  const localHasAccess = existing ? hasMembershipAccess({
+    status: existing.status,
+    currentPeriodEnd: existing.current_period_end,
+    now,
+  }) : false
+  const stalePayingStatus = existing && ACTIVE_RECONCILE_STATUSES.has(existing.status) && !localHasAccess
+  const needsReconcile = ((!existing || existing.status === 'canceled' || stalePayingStatus) && !!args.checkoutSessionId)
+    || !!stalePayingStatus
 
   // Resolve the subscription to reconcile against. When we have a checkout session
   // (student just returned from Checkout), the session is authoritative — on a
@@ -56,13 +63,14 @@ export async function getFreshMembership(args: {
     return existing ?? null // cs/subscription belongs to someone else — do not mint a membership
   }
   // Shared projection with the webhook handler so status/period-end mapping can't drift.
-  const { status, currentPeriodEnd, stripeCustomerId } = subscriptionToMembership(sub)
+  const { status, currentPeriodEnd, stripeCustomerId, subscriptionCreated } = subscriptionToMembership(sub)
 
   const { data } = await db.from('memberships').upsert({
     student_id: args.studentId, classroom_id: args.classroomId,
     stripe_customer_id: stripeCustomerId,
     stripe_subscription_id: sub.id, status,
     current_period_end: currentPeriodEnd ? currentPeriodEnd.toISOString() : null,
+    stripe_subscription_created_at: subscriptionCreated ? subscriptionCreated.toISOString() : null,
   }, { onConflict: 'student_id,classroom_id' }).select().single()
   return data
 }

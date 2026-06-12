@@ -12,6 +12,7 @@ type MembershipRow = {
   classroom_id: string
   stripe_customer_id: string
   stripe_subscription_id: string | null
+  stripe_subscription_created_at?: string | null
   status: string
   current_period_end: string | null
 }
@@ -74,6 +75,7 @@ function makeSub(id: string, status: string, periodEndUnix = 1781568000): any {
     id,
     customer: 'cus_new',
     status,
+    created: 1781481600,
     current_period_end: periodEndUnix,
     metadata: { student_id: 'stu-1', classroom_id: 'cls-1' },
   }
@@ -169,6 +171,24 @@ describe('getFreshMembership', () => {
     expect(sFake.retrievedSubs).toEqual(['sub_CURRENT'])
     expect(result?.status).toBe('active')
     expect(upserts).toHaveLength(1)
+  })
+
+  it('no checkout session but expired active row: reconciles a missed cancellation from Stripe', async () => {
+    const existing: MembershipRow = {
+      student_id: 'stu-1', classroom_id: 'cls-1',
+      stripe_customer_id: 'cus_1', stripe_subscription_id: 'sub_CURRENT',
+      status: 'active', current_period_end: '2026-01-01T00:00:00.000Z',
+    }
+    const { db, upserts } = makeDb(existing)
+    const sFake = makeStripe({ subs: { sub_CURRENT: makeSub('sub_CURRENT', 'canceled') } })
+    const deps: MembershipDeps = { db, stripe: sFake.stripe, onAccount }
+
+    const result = await getFreshMembership({ ...baseArgs }, deps)
+
+    expect(sFake.retrievedSubs).toEqual(['sub_CURRENT'])
+    expect(result?.status).toBe('canceled')
+    expect(upserts).toHaveLength(1)
+    expect(upserts[0].status).toBe('canceled')
   })
 
   it('metadata mismatch: checkout sub belongs to someone else — does not mint a membership', async () => {

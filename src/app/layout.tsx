@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { env } from "@/lib/env";
+import { publicAppEnv } from "@/lib/env";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -18,7 +18,7 @@ const SITE_DESCRIPTION =
   "Run paid live classes on Zoom or Google Meet with members-only access and automatic billing.";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(env().APP_URL),
+  metadataBase: new URL(publicAppEnv().APP_URL),
   title: {
     default: SITE_NAME,
     template: `%s · ${SITE_NAME}`,

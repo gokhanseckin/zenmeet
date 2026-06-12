@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getUser } from '@/lib/auth'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { canJoin } from '@/lib/unlock'
+import { getFreshMembership } from '@/lib/membership'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -58,7 +59,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sess
   const db = supabaseAdmin()
   const { data: session } = await db
     .from('sessions')
-    .select('id, starts_at, ends_at, status, join_url, classroom_id, classrooms!inner(slug, teacher_id)')
+    .select('id, starts_at, ends_at, status, join_url, classroom_id, classrooms!inner(slug, teacher_id, teachers!inner(stripe_account_id))')
     .eq('id', sessionId)
     .single()
 
@@ -78,15 +79,28 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sess
 
   const isTeacher = (session as any).classrooms.teacher_id === user.id
   if (!isTeacher) {
-    const { data: membership } = await db
-      .from('memberships')
-      .select('status')
-      .eq('student_id', user.id)
-      .eq('classroom_id', session.classroom_id)
-      .maybeSingle()
+    const stripeAccountId = (session as any).classrooms.teachers?.stripe_account_id as string | null
+    let membership: { status: string; current_period_end?: string | null } | null = null
+    if (stripeAccountId) {
+      membership = await getFreshMembership({
+        studentId: user.id,
+        classroomId: session.classroom_id,
+        stripeAccountId,
+        checkoutSessionId: new URL(req.url).searchParams.get('cs') ?? undefined,
+      })
+    } else {
+      const { data } = await db
+        .from('memberships')
+        .select('status, current_period_end, stripe_subscription_id')
+        .eq('student_id', user.id)
+        .eq('classroom_id', session.classroom_id)
+        .maybeSingle()
+      membership = data
+    }
 
     const ok = canJoin({
       membershipStatus: membership?.status ?? null,
+      currentPeriodEnd: membership?.current_period_end ?? null,
       sessionStartsAt: new Date(session.starts_at),
       now: new Date(),
     })

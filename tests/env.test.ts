@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
+import { billingEnv, publicAppEnv, zoomEnv } from '@/lib/env'
 
 // Mirror the TOKEN_ENC_KEY refine in src/lib/env.ts. env() caches process.env
 // at first call, so we test the refine rule directly to avoid global mutation.
@@ -23,5 +24,25 @@ describe('TOKEN_ENC_KEY validation', () => {
   })
   it('rejects a too-short key', () => {
     expect(tokenKey.safeParse('short').success).toBe(false)
+  })
+})
+
+const basePublicEnv = {
+  APP_URL: 'https://zenmeet.example',
+  NEXT_PUBLIC_SUPABASE_URL: 'https://project.supabase.co',
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-key',
+}
+
+describe('feature-scoped env validation', () => {
+  it('allows app pages to read public app config without billing or provider secrets', () => {
+    expect(publicAppEnv(basePublicEnv)).toEqual(basePublicEnv)
+  })
+
+  it('keeps billing secrets feature-scoped and required for billing code', () => {
+    expect(() => billingEnv(basePublicEnv)).toThrow(/STRIPE_SECRET_KEY/)
+  })
+
+  it('keeps Zoom provider secrets feature-scoped and required for Zoom code', () => {
+    expect(() => zoomEnv(basePublicEnv)).toThrow(/ZOOM_CLIENT_ID/)
   })
 })
