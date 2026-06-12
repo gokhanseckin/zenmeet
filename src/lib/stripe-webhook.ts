@@ -5,6 +5,7 @@ export type MembershipUpsert = {
   stripeCustomerId: string; stripeSubscriptionId: string
   status: 'trialing' | 'active' | 'past_due' | 'canceled'
   currentPeriodEnd: Date | null
+  subscriptionCreated: Date | null
 }
 
 export interface WebhookDb {
@@ -19,13 +20,23 @@ export interface WebhookDb {
   classroomOwnerAccount(classroomId: string): Promise<string | null>
   /** The stripe_subscription_id currently stored for (student, classroom), or null if no row. */
   membershipSubscriptionId(classroomId: string, studentId: string): Promise<string | null>
+  /**
+   * Optional richer authority for ordering different subscriptions for one
+   * (student, classroom). Older adapters can omit it and keep the previous
+   * subscription-id-only behavior.
+   */
+  currentMembershipAuthority?(classroomId: string, studentId: string): Promise<{
+    stripeSubscriptionId: string | null
+    subscriptionCreated: number | null
+    status?: string | null
+  } | null>
 }
 
 // Minimal local type for subscription item with current_period_end,
 // since Stripe SDK v22 moved current_period_end to the subscription root but
 // the plan's test fixture sets it on the item. We accept either location.
 type SubItem = { current_period_end?: number }
-type SubWithItems = Stripe.Subscription & { items?: { data: SubItem[] } }
+type SubWithItems = Stripe.Subscription & { items?: { data: SubItem[] }; created?: number }
 type MembershipStatus = MembershipUpsert['status']
 
 /** Map a Stripe subscription status string to our membership status. */
@@ -46,6 +57,11 @@ export function subscriptionPeriodEnd(sub: Stripe.Subscription): number | undefi
   return s.current_period_end ?? s.items?.data?.[0]?.current_period_end
 }
 
+function subscriptionCreated(sub: Stripe.Subscription): number | null {
+  const created = (sub as SubWithItems).created
+  return typeof created === 'number' ? created : null
+}
+
 /**
  * Shared subscription→membership projection used by both the webhook handler
  * and the on-read reconciler, so status/period-end mapping can't drift.
@@ -53,12 +69,19 @@ export function subscriptionPeriodEnd(sub: Stripe.Subscription): number | undefi
  */
 export function subscriptionToMembership(
   sub: Stripe.Subscription, opts: { deleted?: boolean } = {},
-): { status: MembershipStatus; currentPeriodEnd: Date | null; stripeCustomerId: string } {
+): {
+  status: MembershipStatus
+  currentPeriodEnd: Date | null
+  stripeCustomerId: string
+  subscriptionCreated: Date | null
+} {
   const periodEnd = subscriptionPeriodEnd(sub)
+  const created = subscriptionCreated(sub)
   return {
     status: opts.deleted ? 'canceled' : subscriptionToStatus(sub.status),
     currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : null,
     stripeCustomerId: typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
+    subscriptionCreated: created ? new Date(created * 1000) : null,
   }
 }
 
@@ -102,9 +125,22 @@ export async function handleStripeEvent(event: Stripe.Event, db: WebhookDb): Pro
   // out a paying student. So: if the deleted event names a different subscription than
   // the one currently stored, it's for a superseded sub — skip the upsert. The event is
   // still valid (we marked it processed), just no longer authoritative for this row.
-  if (event.type === 'customer.subscription.deleted') {
-    const storedSubId = await db.membershipSubscriptionId(classroom_id, student_id)
-    if (storedSubId && storedSubId !== sub.id) {
+  const authority = await db.currentMembershipAuthority?.(classroom_id, student_id)
+  const storedSubId = authority?.stripeSubscriptionId
+    ?? await db.membershipSubscriptionId(classroom_id, student_id)
+
+  if (storedSubId && storedSubId !== sub.id) {
+    if (event.type === 'customer.subscription.deleted') {
+      await db.markProcessed(event.id)
+      return
+    }
+    const currentCreated = authority?.subscriptionCreated
+    const incomingCreated = subscriptionCreated(sub)
+    if (currentCreated != null && incomingCreated != null && incomingCreated < currentCreated) {
+      await db.markProcessed(event.id)
+      return
+    }
+    if (authority && currentCreated == null && authority.status !== 'canceled') {
       await db.markProcessed(event.id)
       return
     }

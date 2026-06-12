@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { randomBytes } from 'node:crypto'
 import { env } from '@/lib/env'
 import { getUser } from '@/lib/auth'
+import { createOAuthState } from '@/lib/oauth-state'
 
 export async function GET(req: NextRequest) {
   const user = await getUser()
   if (!user) return NextResponse.redirect(new URL('/auth/sign-in?next=/onboarding', req.url))
-  // Bind the state nonce to the authenticated user so a stolen/forged state
-  // from another session can't link a provider account to this teacher row.
-  const state = `${randomBytes(16).toString('hex')}.${user.id}`
+  const { state, cookieValue } = createOAuthState('google', user.id)
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth')
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('client_id', env().GOOGLE_CLIENT_ID)
@@ -18,7 +16,7 @@ export async function GET(req: NextRequest) {
   url.searchParams.set('prompt', 'consent')
   url.searchParams.set('state', state)
   const res = NextResponse.redirect(url)
-  res.cookies.set('oauth_state_google', state, {
+  res.cookies.set('oauth_state_google', cookieValue, {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',

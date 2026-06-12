@@ -33,6 +33,8 @@ export interface CronDb {
 export interface MeetingCreator {
   /** Resolves provider + token for the teacher and creates the meeting. */
   createMeeting(target: ProvisionTarget): Promise<{ joinUrl: string; providerMeetingId: string }>
+  /** Best-effort cleanup for a provider meeting created by a tick that lost a save race. */
+  deleteMeeting?(providerMeetingId: string, target: ProvisionTarget): Promise<void>
 }
 
 export const MATERIALIZE_DAYS = 30
@@ -74,10 +76,12 @@ export async function runTick(db: CronDb, creator: MeetingCreator, now = new Dat
     }
   }
   const materialized = rows.length ? await db.insertSessionsIgnoreDupes(rows) : 0
+  await db.markPastSessionsDone(now)
 
   // 2. Provision links (each failure isolated; retried next tick)
   let provisioned = 0, provisionErrors = 0, abandoned = 0
   for (const target of await db.listSessionsNeedingLinks(PROVISION_WINDOW_MS, now)) {
+    if (target.endsAt.getTime() <= now.getTime()) continue
     if (target.attempts >= MAX_ATTEMPTS) {
       abandoned++
       if (target.attempts === MAX_ATTEMPTS) console.error('[cron] giving up on session', target.sessionKey)
@@ -95,7 +99,10 @@ export async function runTick(db: CronDb, creator: MeetingCreator, now = new Dat
     try {
       const won = await db.saveSessionLink(target.sessionKey, meeting.joinUrl, meeting.providerMeetingId)
       if (won) provisioned++
-      else console.error('[cron] session already provisioned by a concurrent tick; orphaned meeting', target.sessionKey, meeting.providerMeetingId)
+      else {
+        console.error('[cron] session already provisioned by a concurrent tick; deleting loser meeting', target.sessionKey, meeting.providerMeetingId)
+        await cleanupLoserMeeting(creator, meeting.providerMeetingId, target)
+      }
     } catch (e) {
       console.error('[cron] saveSessionLink failed (meeting created but not saved)', target.sessionKey, meeting.providerMeetingId, e)
       provisionErrors++
@@ -107,4 +114,17 @@ export async function runTick(db: CronDb, creator: MeetingCreator, now = new Dat
   // 3. Sweep
   await db.markPastSessionsDone(now)
   return { materialized, provisioned, provisionErrors, scheduleErrors, abandoned }
+}
+
+async function cleanupLoserMeeting(
+  creator: MeetingCreator,
+  providerMeetingId: string,
+  target: ProvisionTarget,
+) {
+  if (!creator.deleteMeeting) return
+  try {
+    await creator.deleteMeeting(providerMeetingId, target)
+  } catch (e) {
+    console.error('[cron] delete loser meeting failed', target.sessionKey, providerMeetingId, e)
+  }
 }

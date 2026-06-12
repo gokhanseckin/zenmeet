@@ -1,7 +1,5 @@
 name: cron-tick
 on:
-  schedule:
-    - cron: '*/10 * * * *'
   workflow_dispatch: {}
 jobs:
   tick:

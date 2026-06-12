@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { runTick, MAX_ATTEMPTS, PROVISION_GRACE_MS, type CronDb, type ProvisionTarget } from '@/lib/cron/tick'
 
@@ -140,6 +141,27 @@ describe('runTick', () => {
     const s = [...world.sessions.values()].find(s => s.startsAt.toISOString() === '2026-06-15T11:00:00.000Z')
     expect(s.joinUrl).toBe('https://meet.google.com/winner') // loser did not overwrite
   })
+  it('deletes a loser-created provider meeting after a concurrent save race', async () => {
+    const racingCreate = vi.fn(async (t: ProvisionTarget) => {
+      world.sessions.get(t.sessionKey).joinUrl = 'https://meet.google.com/winner'
+      return { joinUrl: 'https://meet.google.com/loser', providerMeetingId: 'm-loser' }
+    })
+    const deleteMeeting = vi.fn(async () => {})
+    const r = await runTick(world.db, { createMeeting: racingCreate, deleteMeeting }, now)
+    expect(r.provisioned).toBe(0)
+    expect(deleteMeeting).toHaveBeenCalledWith('m-loser', expect.objectContaining({ sessionKey: expect.any(String) }))
+  })
+  it('skips already-ended sessions before creating provider meetings', async () => {
+    const endedNow = new Date('2026-06-15T11:10:00Z')
+    await runTick(world.db, { createMeeting: async () => { throw new Error('first tick intentionally not used') } }, now)
+    const s = [...world.sessions.values()].find(s => s.startsAt.toISOString() === '2026-06-15T11:00:00.000Z')
+    s.endsAt = new Date('2026-06-15T11:05:00Z')
+    s.joinUrl = null
+    okCreate.mockClear()
+    const r = await runTick(world.db, { createMeeting: okCreate }, endedNow)
+    expect(okCreate).not.toHaveBeenCalled()
+    expect(r.abandoned).toBe(0)
+  })
   it('abandons sessions at MAX_ATTEMPTS without calling the provider', async () => {
     const fail = vi.fn(async () => { throw new Error('down') })
     await runTick(world.db, { createMeeting: fail }, now) // materialize
@@ -150,5 +172,18 @@ describe('runTick', () => {
     expect(r.abandoned).toBe(1)
     expect(okCreate).not.toHaveBeenCalled()
     expect(s.joinUrl).toBeNull()
+  }, 10_000)
+})
+
+describe('production cron scheduler configuration', () => {
+  it('uses Supabase pg_cron as the only scheduled production trigger', () => {
+    const workflow = fs.readFileSync('.github/workflows/cron.yml', 'utf8')
+    expect(workflow).not.toMatch(/schedule:/)
+  })
+
+  it('does not hard-code the production cron target URL in the shared migration', () => {
+    const migration = fs.readFileSync('supabase/migrations/0005_provision_cron.sql', 'utf8')
+    expect(migration).not.toContain('https://www.zenmeet.me/api/cron/tick')
+    expect(migration).toContain('zenmeet_cron_target_url')
   })
 })

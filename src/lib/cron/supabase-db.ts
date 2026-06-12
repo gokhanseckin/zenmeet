@@ -92,14 +92,23 @@ export function supabaseCronDb(): CronDb {
 }
 
 export function liveMeetingCreator(): MeetingCreator {
+  const providerParts = async (t: ProvisionTarget) => {
+    const providerName: 'zoom' | 'google' = t.provider === 'zoom' ? 'zoom' : 'google'
+    const store = teacherTokenStore(t.teacherId, providerName)
+    const refresh = t.provider === 'zoom' ? refreshZoom : refreshGoogle
+    const impl = t.provider === 'zoom' ? zoomProvider : googleProvider
+    const accessToken = await getValidAccessToken(store, refresh)
+    return { impl, accessToken }
+  }
+
   return {
     async createMeeting(t) {
-      const providerName: 'zoom' | 'google' = t.provider === 'zoom' ? 'zoom' : 'google'
-      const store = teacherTokenStore(t.teacherId, providerName)
-      const refresh = t.provider === 'zoom' ? refreshZoom : refreshGoogle
-      const impl = t.provider === 'zoom' ? zoomProvider : googleProvider
-      const accessToken = await getValidAccessToken(store, refresh)
+      const { impl, accessToken } = await providerParts(t)
       return impl.createMeeting({ accessToken, title: t.title, startsAt: t.startsAt, endsAt: t.endsAt, timezone: t.timezone })
+    },
+    async deleteMeeting(providerMeetingId, t) {
+      const { impl, accessToken } = await providerParts(t)
+      await impl.deleteMeeting({ accessToken, providerMeetingId })
     },
   }
 }

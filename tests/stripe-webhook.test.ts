@@ -7,6 +7,11 @@ import {
 function makeDb(
   owners: Record<string, string | null> = { 'cls-1': 'acct_T1' },
   storedSubs: Record<string, string | null> = {},
+  authorities: Record<string, {
+    stripeSubscriptionId: string
+    subscriptionCreated: number | null
+    status?: string | null
+  }> = {},
 ) {
   const seen = new Set<string>()
   const upserts: MembershipUpsert[] = []
@@ -20,16 +25,19 @@ function makeDb(
     async membershipSubscriptionId(classroomId, studentId) {
       return storedSubs[`${classroomId}/${studentId}`] ?? null
     },
+    async currentMembershipAuthority(classroomId, studentId) {
+      return authorities[`${classroomId}/${studentId}`] ?? null
+    },
   }
   return { db, upserts, cleared, seen }
 }
 
 const subEvent = (
-  id: string, status: string, type = 'customer.subscription.updated', subId = 'sub_1',
+  id: string, status: string, type = 'customer.subscription.updated', subId = 'sub_1', created = 1781481600,
 ) => ({
   id, type, account: 'acct_T1',
   data: { object: {
-    id: subId, customer: 'cus_1', status,
+    id: subId, customer: 'cus_1', status, created,
     items: { data: [{ current_period_end: 1781568000 }] }, // 2026-06-16T00:00:00Z
     metadata: { classroom_id: 'cls-1', student_id: 'stu-1' },
   } },
@@ -45,6 +53,7 @@ describe('handleStripeEvent', () => {
       classroomId: 'cls-1', studentId: 'stu-1', stripeCustomerId: 'cus_1',
       stripeSubscriptionId: 'sub_1', status: 'active',
       currentPeriodEnd: new Date('2026-06-16T00:00:00.000Z'),
+      subscriptionCreated: new Date('2026-06-15T00:00:00.000Z'),
     }])
   })
   it('maps subscription.deleted to canceled', async () => {
@@ -76,15 +85,61 @@ describe('handleStripeEvent', () => {
     expect(c.upserts).toHaveLength(1)
     expect(c.upserts[0].status).toBe('canceled')
   })
-  it('non-deleted updated event for a different sub still upserts (only deleted is order-guarded)', async () => {
-    // An `updated` event for a different sub id represents a real state change we should
-    // honor (e.g. the new sub going active); the guard targets stale deletes only.
-    const c = makeDb({ 'cls-1': 'acct_T1' }, { 'cls-1/stu-1': 'sub_OLD' })
+  it('newer non-deleted updated event for a different sub still upserts', async () => {
+    const c = makeDb(
+      { 'cls-1': 'acct_T1' },
+      { 'cls-1/stu-1': 'sub_OLD' },
+      { 'cls-1/stu-1': { stripeSubscriptionId: 'sub_OLD', subscriptionCreated: 1781395200 } },
+    )
     await handleStripeEvent(
-      subEvent('evt_upd_new', 'active', 'customer.subscription.updated', 'sub_NEW'), c.db)
+      subEvent('evt_upd_new', 'active', 'customer.subscription.updated', 'sub_NEW', 1781481600), c.db)
     expect(c.upserts).toHaveLength(1)
     expect(c.upserts[0].stripeSubscriptionId).toBe('sub_NEW')
     expect(c.upserts[0].status).toBe('active')
+  })
+  it('out-of-order: old updated event for a superseded sub does NOT clobber the active newer membership', async () => {
+    const c = makeDb(
+      { 'cls-1': 'acct_T1' },
+      { 'cls-1/stu-1': 'sub_NEW' },
+      { 'cls-1/stu-1': { stripeSubscriptionId: 'sub_NEW', subscriptionCreated: 1781481600 } },
+    )
+    await handleStripeEvent(
+      subEvent('evt_upd_old', 'active', 'customer.subscription.updated', 'sub_OLD', 1781395200), c.db)
+    expect(c.upserts).toHaveLength(0)
+    expect(c.seen.has('evt_upd_old')).toBe(true)
+  })
+  it('out-of-order: old created event for a superseded sub does NOT clobber the active newer membership', async () => {
+    const c = makeDb(
+      { 'cls-1': 'acct_T1' },
+      { 'cls-1/stu-1': 'sub_NEW' },
+      { 'cls-1/stu-1': { stripeSubscriptionId: 'sub_NEW', subscriptionCreated: 1781481600 } },
+    )
+    await handleStripeEvent(
+      subEvent('evt_created_old', 'trialing', 'customer.subscription.created', 'sub_OLD', 1781395200), c.db)
+    expect(c.upserts).toHaveLength(0)
+    expect(c.seen.has('evt_created_old')).toBe(true)
+  })
+  it('legacy authority: different-sub updated event without stored creation time does not clobber active row', async () => {
+    const c = makeDb(
+      { 'cls-1': 'acct_T1' },
+      { 'cls-1/stu-1': 'sub_NEW' },
+      { 'cls-1/stu-1': { stripeSubscriptionId: 'sub_NEW', subscriptionCreated: null, status: 'active' } },
+    )
+    await handleStripeEvent(
+      subEvent('evt_legacy_old', 'active', 'customer.subscription.updated', 'sub_OLD', 1781395200), c.db)
+    expect(c.upserts).toHaveLength(0)
+    expect(c.seen.has('evt_legacy_old')).toBe(true)
+  })
+  it('legacy authority: different-sub created event can revive a canceled row', async () => {
+    const c = makeDb(
+      { 'cls-1': 'acct_T1' },
+      { 'cls-1/stu-1': 'sub_OLD' },
+      { 'cls-1/stu-1': { stripeSubscriptionId: 'sub_OLD', subscriptionCreated: null, status: 'canceled' } },
+    )
+    await handleStripeEvent(
+      subEvent('evt_legacy_new', 'active', 'customer.subscription.created', 'sub_NEW', 1781481600), c.db)
+    expect(c.upserts).toHaveLength(1)
+    expect(c.upserts[0].stripeSubscriptionId).toBe('sub_NEW')
   })
   it('maps unknown stripe statuses conservatively', async () => {
     await handleStripeEvent(subEvent('evt_3', 'unpaid'), ctx.db)
@@ -208,6 +263,7 @@ describe('shared subscription→membership projection', () => {
     expect(active.status).toBe('active')
     expect(active.stripeCustomerId).toBe('cus_x')
     expect(active.currentPeriodEnd).toEqual(new Date('2026-06-16T00:00:00.000Z'))
+    expect(active.subscriptionCreated).toBeNull()
 
     const deleted = subscriptionToMembership(mkSub('active'), { deleted: true })
     expect(deleted.status).toBe('canceled')

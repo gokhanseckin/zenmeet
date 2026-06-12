@@ -21,6 +21,7 @@ function supabaseWebhookDb(): WebhookDb {
         classroom_id: m.classroomId, student_id: m.studentId,
         stripe_customer_id: m.stripeCustomerId, stripe_subscription_id: m.stripeSubscriptionId,
         status: m.status, current_period_end: m.currentPeriodEnd?.toISOString() ?? null,
+        stripe_subscription_created_at: m.subscriptionCreated?.toISOString() ?? null,
       }, { onConflict: 'student_id,classroom_id' })
       if (error) throw new Error(error.message)
     },
@@ -46,6 +47,20 @@ function supabaseWebhookDb(): WebhookDb {
         .maybeSingle()
       if (error) throw new Error(error.message)
       return (data as any)?.stripe_subscription_id ?? null
+    },
+    async currentMembershipAuthority(classroomId, studentId) {
+      const { data, error } = await db.from('memberships')
+        .select('stripe_subscription_id, stripe_subscription_created_at, status')
+        .eq('classroom_id', classroomId)
+        .eq('student_id', studentId)
+        .maybeSingle()
+      if (error) throw new Error(error.message)
+      const created = (data as any)?.stripe_subscription_created_at
+      return {
+        stripeSubscriptionId: (data as any)?.stripe_subscription_id ?? null,
+        subscriptionCreated: created ? Math.floor(new Date(created).getTime() / 1000) : null,
+        status: (data as any)?.status ?? null,
+      }
     },
   }
 }

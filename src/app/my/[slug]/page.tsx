@@ -1,12 +1,25 @@
 import { notFound } from 'next/navigation'
 import { requireUser } from '@/lib/auth'
 import { supabaseAdmin } from '@/lib/supabase/admin'
-import { canJoin, unlocksAt, ACTIVE_STATUSES } from '@/lib/unlock'
+import { canJoin, hasMembershipAccess, unlocksAt } from '@/lib/unlock'
 import { getFreshMembership } from '@/lib/membership'
 import { Countdown } from '@/app/[slug]/countdown'
 import { PortalButton } from './portal-button'
 
 export const dynamic = 'force-dynamic'
+
+type MembershipLike = {
+  status: string | null
+  current_period_end?: string | null
+} | null
+
+function hasCurrentMembership(membership: MembershipLike, now = new Date()) {
+  return hasMembershipAccess({
+    status: membership?.status ?? null,
+    currentPeriodEnd: membership?.current_period_end ?? null,
+    now,
+  })
+}
 
 export default async function MemberHome({ params, searchParams }: {
   params: Promise<{ slug: string }>
@@ -18,16 +31,17 @@ export default async function MemberHome({ params, searchParams }: {
   const db = supabaseAdmin()
 
   const { data: classroom } = await db.from('classrooms')
-    .select('id, slug, title, provider, teachers!inner(stripe_account_id, timezone)')
+    .select('id, slug, status, teacher_id, teachers!inner(stripe_account_id, timezone)')
     .eq('slug', slug).single()
   if (!classroom) notFound()
 
   const teacher = (classroom as any).teachers
   const stripeAccountId: string | null = teacher.stripe_account_id ?? null
+  const isOwner = classroom.teacher_id === user.id
 
   // Guard: if teacher has no Stripe account, skip getFreshMembership and read DB directly
   let membership: Awaited<ReturnType<typeof getFreshMembership>> | null = null
-  if (stripeAccountId) {
+  if (!isOwner && stripeAccountId) {
     membership = await getFreshMembership({
       studentId: user.id,
       classroomId: classroom.id,
@@ -43,19 +57,31 @@ export default async function MemberHome({ params, searchParams }: {
     membership = data
   }
 
-  const active = membership && ACTIVE_STATUSES.has(membership.status)
+  const active = hasCurrentMembership(membership)
+  const canViewPrivateDetails = isOwner || active
 
-  // Select join_url to compute linkReady flag, but immediately map to strip the raw URL
-  const { data: rawSessions } = await db.from('sessions')
-    .select('id, starts_at, ends_at, join_url')
-    .eq('classroom_id', classroom.id)
-    .eq('status', 'scheduled')
-    .gt('ends_at', new Date().toISOString())
-    .order('starts_at')
-    .limit(5)
+  if (!canViewPrivateDetails && classroom.status !== 'published') notFound()
+
+  const { data: displayClassroom } = await db.from('classrooms')
+    .select('id, slug, title, provider')
+    .eq('id', classroom.id).single()
+  if (!displayClassroom) notFound()
+
+  let rawSessions: { id: string; starts_at: string; ends_at: string; join_url: string | null }[] = []
+  if (canViewPrivateDetails) {
+    // Select join_url to compute linkReady flag, but immediately map to strip the raw URL
+    const { data } = await db.from('sessions')
+      .select('id, starts_at, ends_at, join_url')
+      .eq('classroom_id', classroom.id)
+      .eq('status', 'scheduled')
+      .gt('ends_at', new Date().toISOString())
+      .order('starts_at')
+      .limit(5)
+    rawSessions = data ?? []
+  }
 
   // Map immediately — raw join_url never touches JSX or client components
-  const upcoming = (rawSessions ?? []).map(s => ({
+  const upcoming = rawSessions.map(s => ({
     id: s.id,
     startsAt: s.starts_at,
     endsAt: s.ends_at,
@@ -65,6 +91,7 @@ export default async function MemberHome({ params, searchParams }: {
   const next = upcoming[0]
   const unlocked = next && active && canJoin({
     membershipStatus: membership!.status,
+    currentPeriodEnd: membership!.current_period_end ?? null,
     sessionStartsAt: new Date(next.startsAt),
     now: new Date(),
   })
@@ -84,10 +111,10 @@ export default async function MemberHome({ params, searchParams }: {
       {active
         ? <span className="rounded-full border px-3 py-1 text-xs text-green-800">● Active member</span>
         : <span className="rounded-full border px-3 py-1 text-xs text-red-800">Membership inactive — <a className="underline" href={`/${slug}`}>rejoin</a></span>}
-      <h1 className="mt-4 text-3xl font-bold">{classroom.title}</h1>
+      <h1 className="mt-4 text-3xl font-bold">{displayClassroom.title}</h1>
       {next && (
         <p className="mt-1 text-neutral-600">
-          Next: {fmt(next.startsAt)} · {classroom.provider === 'meet' ? 'Google Meet' : 'Zoom'}
+          Next: {fmt(next.startsAt)} · {displayClassroom.provider === 'meet' ? 'Google Meet' : 'Zoom'}
         </p>
       )}
 
@@ -101,7 +128,7 @@ export default async function MemberHome({ params, searchParams }: {
               </a>
               <p className="mt-2 text-xs text-neutral-500">
                 {next.linkReady
-                  ? `Opens ${classroom.provider === 'meet' ? 'Google Meet' : 'Zoom'}`
+                  ? `Opens ${displayClassroom.provider === 'meet' ? 'Google Meet' : 'Zoom'}`
                   : 'Link is on its way — refresh shortly'}
               </p>
               {pending && (
@@ -120,14 +147,20 @@ export default async function MemberHome({ params, searchParams }: {
       )}
 
       <nav className="mt-8 divide-y border-t border-b">
-        <PortalButton slug={slug} label="Manage membership" />
-        <PortalButton slug={slug} label="Billing & receipts" />
-        <details className="py-3">
-          <summary className="cursor-pointer">Class schedule</summary>
-          <ul className="mt-2 space-y-1 text-sm text-neutral-600">
-            {upcoming.map(s => <li key={s.id}>{fmt(s.startsAt)}</li>)}
-          </ul>
-        </details>
+        {active && (
+          <>
+            <PortalButton slug={slug} label="Manage membership" />
+            <PortalButton slug={slug} label="Billing & receipts" />
+          </>
+        )}
+        {canViewPrivateDetails && (
+          <details className="py-3">
+            <summary className="cursor-pointer">Class schedule</summary>
+            <ul className="mt-2 space-y-1 text-sm text-neutral-600">
+              {upcoming.map(s => <li key={s.id}>{fmt(s.startsAt)}</li>)}
+            </ul>
+          </details>
+        )}
       </nav>
     </main>
   )

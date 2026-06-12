@@ -25,9 +25,14 @@ export async function POST(req: NextRequest) {
   const { data: membership } = await db.from('memberships').select('stripe_customer_id')
     .eq('student_id', user.id).eq('classroom_id', classroom.id).maybeSingle()
   if (!membership?.stripe_customer_id) return NextResponse.json({ error: 'no membership' }, { status: 404 })
-  const portal = await stripe().billingPortal.sessions.create({
-    customer: membership.stripe_customer_id,
-    return_url: `${env().APP_URL}/my/${slug}`,
-  }, onAccount(stripeAccountId))
+  let portal: { url: string | null }
+  try {
+    portal = await stripe().billingPortal.sessions.create({
+      customer: membership.stripe_customer_id,
+      return_url: `${env().APP_URL}/my/${slug}`,
+    }, onAccount(stripeAccountId))
+  } catch {
+    return NextResponse.json({ error: 'portal_not_configured' }, { status: 409 })
+  }
   return NextResponse.json({ redirect: portal.url })
 }

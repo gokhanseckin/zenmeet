@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getUser, ensureTeacher } from '@/lib/auth'
 import { exchangeZoomCode } from '@/lib/providers/zoom'
 import { saveTeacherTokens } from '@/lib/providers/store'
+import { verifyOAuthState } from '@/lib/oauth-state'
 
 /** Single-use state nonce: clear the cookie on every exit path. */
 function redirectClearingState(url: URL) {
@@ -16,16 +17,10 @@ export async function GET(req: NextRequest) {
   const state = url.searchParams.get('state')
   const cookieState = req.cookies.get('oauth_state_zoom')?.value
   const user = await getUser()
-  // CSRF: nonce double-submit (state === cookieState) AND the user-id bound
-  // into the state at /start must match the current session's user.
-  const boundUserId = state?.split('.')[1]
   if (
     !user ||
     !code ||
-    !state ||
-    !cookieState ||
-    state !== cookieState ||
-    boundUserId !== user.id
+    !verifyOAuthState({ provider: 'zoom', state, cookieValue: cookieState, userId: user.id })
   ) {
     return redirectClearingState(new URL('/onboarding?step=provider&error=oauth', req.url))
   }

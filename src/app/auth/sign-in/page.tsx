@@ -1,21 +1,23 @@
 import { supabaseServer } from '@/lib/supabase/server'
-import { env } from '@/lib/env'
+import { publicAppEnv } from '@/lib/env'
 import { safeNext } from '@/lib/redirects'
 
 export default async function SignIn({ searchParams }: { searchParams: Promise<{ next?: string; sent?: string; error?: string }> }) {
   const { next: rawNextParam = '/', sent, error } = await searchParams
-  const next = safeNext(rawNextParam, new URL(env().APP_URL).origin)
+  const appUrl = publicAppEnv().APP_URL
+  const next = safeNext(rawNextParam, new URL(appUrl).origin)
 
   async function send(formData: FormData) {
     'use server'
+    const appUrl = publicAppEnv().APP_URL
     const email = String(formData.get('email') ?? '').trim()
     const rawNext = String(formData.get('next') ?? '/')
-    const nextPath = safeNext(rawNext, new URL(env().APP_URL).origin)
+    const nextPath = safeNext(rawNext, new URL(appUrl).origin)
     if (!email) return
     const supabase = await supabaseServer()
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${env().APP_URL}/auth/confirm?next=${encodeURIComponent(nextPath)}` },
+      options: { emailRedirectTo: `${appUrl}/auth/confirm?next=${encodeURIComponent(nextPath)}` },
     })
     const { redirect } = await import('next/navigation')
     if (error) redirect(`/auth/sign-in?error=send&next=${encodeURIComponent(nextPath)}`)
