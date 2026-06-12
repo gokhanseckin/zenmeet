@@ -24,6 +24,12 @@ function supabaseWebhookDb(): WebhookDb {
       }, { onConflict: 'student_id,classroom_id' })
       if (error) throw new Error(error.message)
     },
+    async clearStripeAccount(accountId) {
+      const { error } = await db.from('teachers')
+        .update({ stripe_account_id: null })
+        .eq('stripe_account_id', accountId)
+      if (error) throw new Error(error.message)
+    },
   }
 }
 
