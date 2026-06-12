@@ -1,5 +1,7 @@
+import { cache } from 'react'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
+import type { Metadata } from 'next'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { getUser } from '@/lib/auth'
 import { canJoin, unlocksAt, ACTIVE_STATUSES } from '@/lib/unlock'
@@ -7,6 +9,57 @@ import { Countdown } from './countdown'
 import { JoinCta } from './join-cta'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * Lightweight, request-deduped fetch of the public-facing fields needed for
+ * share metadata. Cached so generateMetadata and the page don't double-query.
+ */
+const getClassroomMeta = cache(async (slug: string) => {
+  const { data } = await supabaseAdmin()
+    .from('classrooms')
+    .select('title, description, teachers!inner(display_name)')
+    .eq('slug', slug)
+    .eq('status', 'published')
+    .maybeSingle()
+  return data
+})
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>
+}): Promise<Metadata> {
+  const { slug } = await params
+  const classroom = await getClassroomMeta(slug)
+  if (!classroom) {
+    return { title: 'Class not found' }
+  }
+
+  const teacherName = (classroom as any).teachers?.display_name?.trim() || null
+  const title = classroom.title
+  const description =
+    classroom.description?.trim() ||
+    (teacherName
+      ? `Join ${teacherName}'s live class on Zenmeet.`
+      : 'Join this live class on Zenmeet.')
+
+  return {
+    title,
+    description,
+    openGraph: {
+      type: 'website',
+      title,
+      description,
+      url: `/${slug}`,
+      ...(teacherName ? { authors: [teacherName] } : {}),
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+    },
+  }
+}
 
 export default async function ClassroomPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
