@@ -1,4 +1,5 @@
 import { DateTime } from 'luxon'
+import { redirect } from 'next/navigation'
 import { loadDashboard } from '../lib'
 import { createSchedule, cancelSession, setSessionLink, stopSchedule } from '@/app/actions/schedule'
 import { NewScheduleForm } from './forms'
@@ -6,9 +7,18 @@ import { ClassroomSwitcher } from '../switcher'
 
 export const dynamic = 'force-dynamic'
 
-export default async function ScheduleTab({ searchParams }: { searchParams: Promise<{ c?: string }> }) {
-  const { c } = await searchParams
+const SCHEDULE_ERRORS: Record<string, string> = {
+  create: "Couldn't save that schedule — check the time and duration.",
+  cancel: "Couldn't cancel that session.",
+  link: 'That link was rejected — enter a valid URL.',
+  stop: "Couldn't stop that recurring rule.",
+}
+
+export default async function ScheduleTab({ searchParams }: { searchParams: Promise<{ c?: string; error?: string }> }) {
+  const { c, error } = await searchParams
   const { teacher, classroom, classrooms, db } = await loadDashboard(c)
+  // Preserve the active classroom (?c=) when redirecting an action error back here.
+  const back = (code: string) => `/dashboard/schedule?${c ? `c=${c}&` : ''}error=${code}`
   // Load active schedules (filter out ended ones: until < today)
   const today = new Date().toISOString().slice(0, 10)
   const { data: rawSchedules } = await db.from('class_schedules')
@@ -42,23 +52,30 @@ export default async function ScheduleTab({ searchParams }: { searchParams: Prom
   async function submit(fd: FormData) {
     'use server'
     const kind = String(fd.get('kind'))
+    let r
     if (kind === 'weekly') {
-      await createSchedule({ kind: 'weekly', classroomId: classroom.id,
+      r = await createSchedule({ kind: 'weekly', classroomId: classroom.id,
         weekday: Number(fd.get('weekday')), localTime: String(fd.get('localTime')),
         durationMinutes: Number(fd.get('duration')), until: fd.get('until') ? String(fd.get('until')) : null })
     } else {
       const startsAt = DateTime.fromISO(String(fd.get('startsAtLocal')), { zone: teacher.timezone }).toUTC().toISO()!
-      await createSchedule({ kind: 'one_off', classroomId: classroom.id, startsAt, durationMinutes: Number(fd.get('duration')) })
+      r = await createSchedule({ kind: 'one_off', classroomId: classroom.id, startsAt, durationMinutes: Number(fd.get('duration')) })
     }
+    if ('error' in r && r.error) redirect(back('create'))
   }
-  async function cancel(fd: FormData) { 'use server'; await cancelSession(String(fd.get('id'))) }
-  async function manualLink(fd: FormData) { 'use server'; await setSessionLink(String(fd.get('id')), String(fd.get('url'))) }
-  async function stop(fd: FormData) { 'use server'; await stopSchedule(String(fd.get('scheduleId'))) }
+  async function cancel(fd: FormData) { 'use server'; const r = await cancelSession(String(fd.get('id'))); if (r && 'error' in r && r.error) redirect(back('cancel')) }
+  async function manualLink(fd: FormData) { 'use server'; const r = await setSessionLink(String(fd.get('id')), String(fd.get('url'))); if (r && 'error' in r && r.error) redirect(back('link')) }
+  async function stop(fd: FormData) { 'use server'; const r = await stopSchedule(String(fd.get('scheduleId'))); if (r && 'error' in r && r.error) redirect(back('stop')) }
 
   const fmt = (iso: string) => DateTime.fromISO(iso).setZone(teacher.timezone).toFormat('EEE MMM d · h:mma')
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Schedule</h1>
+      {error && (
+        <div className="rounded bg-red-50 p-3 text-sm text-red-800">
+          {SCHEDULE_ERRORS[error] ?? "That didn't work — please try again."}
+        </div>
+      )}
       <ClassroomSwitcher classrooms={classrooms} currentId={classroom.id} basePath="/dashboard/schedule" />
       {activeSchedules.length > 0 && (
         <div>

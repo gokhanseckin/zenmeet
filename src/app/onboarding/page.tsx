@@ -16,9 +16,9 @@ export type Step = typeof ORDER[number]
 export default async function Onboarding({
   searchParams,
 }: {
-  searchParams: Promise<{ step?: string; error?: string }>
+  searchParams: Promise<{ step?: string; error?: string; need?: string }>
 }) {
-  const { step: qs, error } = await searchParams
+  const { step: qs, error, need } = await searchParams
   const user = await requireUser('/onboarding')
   const teacher = await ensureTeacher(user.id)
   const db = supabaseAdmin()
@@ -48,7 +48,7 @@ export default async function Onboarding({
           </li>
         ))}
       </ol>
-      {error && (
+      {error && error !== 'missing' && (
         <p className="mb-4 rounded bg-red-50 p-3 text-sm text-red-800">
           That didn&apos;t work &mdash; check the fields and try again.
         </p>
@@ -60,7 +60,7 @@ export default async function Onboarding({
         <ProviderStep teacher={teacher} provider={classroom?.provider ?? 'meet'} />
       )}
       {step === 'schedule' && (
-        <ScheduleStep classroom={classroom} scheduleCount={scheduleCount ?? 0} />
+        <ScheduleStep classroom={classroom} scheduleCount={scheduleCount ?? 0} error={error} need={need} />
       )}
       {step === 'done' && <DoneStep slug={classroom?.slug} />}
     </main>
