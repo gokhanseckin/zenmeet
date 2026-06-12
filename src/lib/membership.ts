@@ -1,6 +1,7 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { stripe, onAccount } from '@/lib/stripe'
+import { subscriptionToMembership } from '@/lib/stripe-webhook'
 
 /**
  * Injected dependencies. Defaults are the real Stripe + Supabase clients;
@@ -54,19 +55,14 @@ export async function getFreshMembership(args: {
   if (meta.student_id !== args.studentId || meta.classroom_id !== args.classroomId) {
     return existing ?? null // cs/subscription belongs to someone else — do not mint a membership
   }
-  const status = sub.status === 'trialing' ? 'trialing' : sub.status === 'active' ? 'active'
-    : sub.status === 'past_due' ? 'past_due' : 'canceled'
-
-  // Stripe SDK v22 moved current_period_end to subscription root; fall back to items.data[0] for older fixtures.
-  const periodEnd: number | undefined =
-    (sub as unknown as { current_period_end?: number }).current_period_end ??
-    (sub.items?.data?.[0] as unknown as { current_period_end?: number } | undefined)?.current_period_end
+  // Shared projection with the webhook handler so status/period-end mapping can't drift.
+  const { status, currentPeriodEnd, stripeCustomerId } = subscriptionToMembership(sub)
 
   const { data } = await db.from('memberships').upsert({
     student_id: args.studentId, classroom_id: args.classroomId,
-    stripe_customer_id: typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
+    stripe_customer_id: stripeCustomerId,
     stripe_subscription_id: sub.id, status,
-    current_period_end: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
+    current_period_end: currentPeriodEnd ? currentPeriodEnd.toISOString() : null,
   }, { onConflict: 'student_id,classroom_id' }).select().single()
   return data
 }
